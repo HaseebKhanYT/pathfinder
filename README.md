@@ -1,2 +1,2 @@
 # pathfinder
-Finding the patience for the right research.
+Finding the patients for the right research.
