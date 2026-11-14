@@ -3,6 +3,7 @@
   python -m pathfinder.cli extract  --split train [--limit N] [--model M]
   python -m pathfinder.cli evaluate --split train [--model M]
   python -m pathfinder.cli submit   [--model M] [--out outputs/submission.json]
+  python -m pathfinder.cli query    "question" [--split train] [--rule JSON] [--yes] [--max-fallback N]
 
 Extractions are cached in outputs/extractions/<split>.<model>.jsonl.
 """
@@ -113,6 +114,52 @@ def cmd_submit(a):
     print(f"wrote {out} ({len(recs)}/{len(rows)} test reports extracted)")
 
 
+def _confirm_interactive(est) -> bool:
+    import sys
+
+    msg = (f"\nThe question has a part outside the schema. Checking it needs {est.calls} LLM call(s) "
+           f"(~{est.input_tokens:,} input / ~{est.output_tokens:,} output tokens, {est.cached} already cached).")
+    print(msg, file=sys.stderr)
+    if not sys.stdin.isatty():  # never spend without an explicit yes from a person
+        print("Not a terminal, so not asking: re-run with --yes to allow these calls.", file=sys.stderr)
+        return False
+    print("Spend OpenAI credits on this? [y/N] ", end="", file=sys.stderr, flush=True)
+    try:
+        return sys.stdin.readline().strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
+def cmd_query(a):
+    from .query.run import render, run_query
+
+    recs = _records(a.split, a.model, a.reasoning_effort)
+    if not recs:
+        raise SystemExit(f"no saved {a.split} extractions for {a.model}; run extract --split {a.split} first")
+    texts = {r["id"]: r["report_text"] for r in load_split(a.split) if r["id"] in recs}
+    confirm = (lambda est: True) if a.yes else _confirm_interactive
+    rule = json.loads(a.rule) if a.rule else None
+    res = run_query(a.question, recs, texts, a.model, confirm, a.max_fallback, a.reasoning_effort,
+                    rule=rule, answer_type=a.answer, breakdown_by=a.by, uncovered=a.uncovered)
+    print(f"[{len(recs)} saved {a.split} records]")
+    print(render(res))
+    if a.out and not res.error:
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.out).write_text(json.dumps({
+            "question": res.question, "interpretation": res.interpretation, "rule": res.rule,
+            "uncovered": res.uncovered,
+            "answered": res.answered, "complete": res.complete,
+            "fallback_skipped": res.fallback.skipped_reason if res.fallback else None,
+            "fallback_failed": res.fallback.failed if res.fallback else [],
+            "rule_ids": res.rule_ids,
+            "count": res.count if res.answered else None,
+            "ids": res.ids if res.answered else None,
+            "breakdown": res.breakdown if res.answered else None,
+            "evidence": res.fallback.evidence if res.fallback else {},
+        }, indent=1))
+        print(f"wrote {a.out}")
+
+
 def main():
     ap = argparse.ArgumentParser(prog="pathfinder")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -126,8 +173,21 @@ def main():
             p.add_argument("--limit", type=int, default=0)
         if name == "submit":
             p.add_argument("--out", default=str(OUT / "submission.json"))
+    q = sub.add_parser("query", help="answer a cohort question over saved extractions")
+    q.add_argument("question")
+    q.add_argument("--split", default="train", choices=["train", "test"])
+    q.add_argument("--model", default=DEFAULT_MODEL)
+    q.add_argument("--reasoning-effort", default="low")
+    q.add_argument("--rule", help="skip translation and run this rule JSON (no API calls)")
+    q.add_argument("--answer", default="ids", choices=["ids", "count", "breakdown"], help="with --rule only")
+    q.add_argument("--by", help="breakdown field, with --rule only")
+    q.add_argument("--uncovered", help="with --rule: the yes/no question for the per-report fallback")
+    q.add_argument("--yes", action="store_true", help="allow fallback API calls without asking")
+    q.add_argument("--max-fallback", type=int, default=100,
+                   help="refuse the fallback if more than this many reports need an LLM call")
+    q.add_argument("--out", help="also write the result as JSON")
     a = ap.parse_args()
-    {"extract": cmd_extract, "evaluate": cmd_evaluate, "submit": cmd_submit}[a.cmd](a)
+    {"extract": cmd_extract, "evaluate": cmd_evaluate, "submit": cmd_submit, "query": cmd_query}[a.cmd](a)
 
 
 if __name__ == "__main__":
