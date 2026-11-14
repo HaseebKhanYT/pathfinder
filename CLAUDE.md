@@ -128,4 +128,4 @@ What makes C1 and C2 hard:
 - **Blank tiles in the 20x pack.** 461 tiles (6%) are black or empty glass and should be removed first using `blank_tiles.csv`. SUPP-04 is worst (70% blank), and `SUPP-04-bb_04_wsi_0009` has no usable 20x tile at all.
 - **Coverage gaps.** Prov-GigaPath, the strongest baseline, has slide vectors only (no tile vectors) and is missing 2 slides.
 - **Metadata leakage risk.** The manifest carries fields like `report`, `diagnosis`, `stain`, `scanner`, and `supplierId` for labelled slides, and held-out slides still carry `supplierId`, `stain`, `scanner`, `vendor`, `magnification`, `mpp`, `ageBucket`, and `sex`. Whether a shortcut through metadata is acceptable is a judgement call to raise with the user, not to assume.
-- HISTAI (see "External: HISTAI" above) is the only allowed source of extra slide training data.
+- HISTAI (see "External: HISTAI" above) is named in the slide README as allowed extra training data.
