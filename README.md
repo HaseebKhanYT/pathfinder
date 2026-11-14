@@ -20,3 +20,19 @@ echo 'OPENAI_API_KEY=sk-...' > .env              # git-ignored
 .venv/bin/python -m pathfinder.cli evaluate      # criteria P/R/F1 and field accuracy vs train labels
 .venv/bin/python -m pathfinder.cli submit        # extract test.jsonl, write outputs/submission.json
 ```
+
+## Query layer
+
+`pathfinder/query/` answers new cohort questions over the saved extractions. Reports are extracted once; each question becomes a rule.
+
+1. **Translate** (`translate.py`): the LLM gets the question, the field catalog with allowed values (`catalog.py`, read from the schema), and the 30 criteria rules as worked examples, and writes a rule in the engine's JSON format.
+2. **Validate** (`validate.py`): unknown fields, values that aren't allowed or never occur, and ops that don't fit a field's type are rejected; the errors go back to the LLM to fix (up to 3 repairs).
+3. **Run** (`run.py`): the engine runs the rule over the saved records and returns ids, a count, or a breakdown. No API calls.
+4. **Fall back** (`fallback.py`): if part of the question is outside the schema (for example MMR status), the rule covers what it can and each remaining report gets a yes/no LLM check with a verbatim quote. A yes counts only if the quote (3+ words) is found in the report. This step shows a token estimate and asks first, refuses above `--max-fallback` (default 100), never spends from a non-terminal without `--yes`, and caches verdicts.
+5. **Show**: the rule is printed with every answer, plus a `--rule ... --uncovered ...` line that re-runs the same query with no translation call.
+
+```sh
+.venv/bin/python -m pathfinder.cli query "Kidney cancers larger than 7 cm, broken down by extent of invasion"
+.venv/bin/python -m pathfinder.cli query "LVI-positive breast" --rule '{"all":[["organ","eq","breast"],["lymphovascular_invasion","eq","present"]]}' --answer breakdown --by pT_base   # no API calls
+.venv/bin/python -m unittest discover -s tests   # offline tests, fake LLMs
+```
