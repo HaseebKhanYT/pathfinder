@@ -46,8 +46,10 @@ echo 'OPENAI_API_KEY=sk-...' > .env              # git-ignored
 .venv/bin/streamlit run streamlit_app.py
 ```
 
-- **Ask**: type a question and let the LLM translate it, or write the rule JSON yourself (no API calls). Shows the rule, rejected attempts, the count, a breakdown chart, and the matching reports; click a row to read the report next to its extracted record. When part of the question is outside the schema, the app shows the fallback's cost estimate and sends nothing until you click the button that names the token cost. **Edit this rule** copies a translated rule into the editor so you can re-run it without another translation call.
+- **Ask** (home): type a question and press Enter, or pick an example chip. The LLM translates it into a rule, and the answer card shows how the question was read, the count, the rule, a breakdown chart, and the matching reports. Click a row to read the report next to its extracted record. Rejected attempts and token usage are at the foot of the card. When part of the question is outside the schema, the card shows the fallback's cost estimate and sends nothing until you click the button that names the token cost. **Edit this rule** copies a translated rule into the rule editor so you can re-run it without another translation call; **or write the rule yourself** on the home view opens the same editor (no API calls).
 - **Criteria** (train only): the 30 rules scored against `criteria_train_answers.json`, with false positives and negatives for each criterion, and each report's extracted fields compared with the gold record from `oracle.py`.
 - **Reports**: look up any saved report by id.
 
-The sidebar picks the split, the extraction model (any `outputs/extractions/<split>.<model>.jsonl`), the reasoning effort the extractions were made with, and the fallback cap.
+Click the **pathfinder** logo to return to the empty home view. The settings popover, behind the `split · model · N reports` label at the top right, picks the split, the extraction model (any `outputs/extractions/<split>.<model>.jsonl`), the reasoning effort the extractions were made with, and the fallback cap, and says whether `OPENAI_API_KEY` was found.
+
+The look follows the "Pathfinder Redesign" file in Claude Design. Colors and fonts are in `.streamlit/config.toml`; the hero, search bar, and answer card are styled by the CSS at the top of `streamlit_app.py`. The fonts load from Google Fonts and the home-page photos are hotlinked from Wikimedia Commons, with credits shown on hover, so the app needs a network connection to look right.

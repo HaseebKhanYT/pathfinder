@@ -7,17 +7,23 @@ Writing a rule by hand, scoring the criteria, and browsing reports make no API
 calls. Translating a question makes 1 to 4 calls. The per-report fallback runs
 only after you click the button that shows its cost estimate, and only if the
 fresh estimate is no larger than the one on the button.
+
+The look follows the "Pathfinder Redesign" Claude Design file: a centered
+search on the home view, then one question and its answer card. The theme is
+in .streamlit/config.toml; the CSS below styles the keyed containers
+(`st.container(key="pf-...")` renders as the class `st-key-pf-...`).
 """
 
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
 from collections import Counter
+from contextlib import contextmanager
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -31,21 +37,164 @@ from pathfinder.oracle import gold_extraction
 from pathfinder.query.catalog import build_catalog
 from pathfinder.query.run import format_rule, run_query, to_dict
 
-st.set_page_config(page_title="pathfinder", layout="wide")
+st.set_page_config(page_title="pathfinder", layout="wide", initial_sidebar_state="collapsed")
 
 EFFORTS = ["low", "medium", "high", ""]  # "" = no reasoning_effort (non-reasoning models)
+# (chip label, question sent)
 EXAMPLES = [
-    "",
-    "Kidney cancers larger than 7 cm, broken down by extent of invasion",
-    "How many breast cancers are triple negative?",
-    "Colon cancers with 1 or more positive lymph nodes, by pT",
-    "Women aged 70 or older with lung adenocarcinoma and visceral pleural invasion",
-    "Prostate cancers with Grade Group 4 or 5 and seminal vesicle invasion",
-    "Colon cancers with MMR deficiency (needs the per-report fallback)",
+    ("Kidney > 7 cm by extent", "Kidney cancers larger than 7 cm, broken down by extent of invasion"),
+    ("Triple-negative breast", "How many breast cancers are triple negative?"),
+    ("Node-positive colon by pT", "Colon cancers with 1 or more positive lymph nodes, by pT"),
+    ("Prostate GG 4–5 with SVI", "Prostate cancers with Grade Group 4 or 5 and seminal vesicle invasion"),
 ]
-# Shown in the results table next to the id; the full record is one click away.
-SUMMARY_COLS = ["organ", "sex", "age_band", "histologic_category", "tumor_size_text", "pT", "pN",
-                "lymph_nodes_positive", "margin_status"]
+# Results table columns (record field -> header); the full record is one click away.
+SUMMARY_COLS = {"organ": "organ", "sex": "sex", "age_band": "age", "histologic_category": "histology",
+                "tumor_size_text": "size", "pT": "pT", "pN": "pN", "margin_status": "margin"}
+# Home-page image band: (Commons file, credit, height in px, flex grow). Hotlinked from
+# Wikimedia Commons with the credit shown on the image, as in the design file.
+COMMONS = "https://commons.wikimedia.org/wiki/"
+BAND = [
+    ("Microscope_(inverted).jpg", "National Cancer Institute / Wikimedia Commons", 170, 1),
+    ("Medical_stethoscope.jpg", "Wikimedia Commons", 230, 1),
+    ("Test_tubes_in_a_laboratory.jpg", "Vit Almer / Wikimedia Commons", 270, 1.2),
+    ("Sterile_surgical_instruments.jpg", "Wikimedia Commons", 230, 1),
+    ("Histologic_Slide_under_MIcroscope.jpg", "Ed Uthman / Wikimedia Commons", 170, 1),
+]
+
+CSS = """
+<style>
+/* ---- page chrome: hide Streamlit's header bar, sidebar, and padding ---- */
+header[data-testid="stHeader"], [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+[data-testid="stDecoration"] { display: none !important; }
+.stMainBlockContainer, [data-testid="stMainBlockContainer"] { padding: 20px 32px 0 !important; max-width: none; }
+a { color: #3C7A6E; } a:hover { color: #2A5C52; }
+[data-testid="InputInstructions"] { display: none; }
+/* Streamlit pulls markdown up by 1rem to collapse paragraph margins; undo it for the app's own HTML blocks */
+[data-testid="stMarkdownContainer"]:has(> [class*="pf-"]) { margin-bottom: 0; }
+/* style-only st.markdown calls would otherwise each add a flex gap */
+[data-testid="stElementContainer"]:has(style) { display: none; }
+.st-key-pf-hero, .st-key-pf-thread, .st-key-pf-dock, .st-key-pf-page, .st-key-pf-chips { margin-inline: auto; }
+@keyframes pfPulse { 0%,100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+.pf-serif { font-family: "Newsreader", Georgia, serif; }
+.pf-mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+/* ---- header: logo (resets the app), nav, settings ---- */
+.st-key-pf-header { align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.st-key-pf-logo button { background: none; border: 0; padding: 6px 8px; margin: -6px -8px; border-radius: 10px;
+  color: #1E3A35; gap: 10px; min-height: 0; box-shadow: none; }
+.st-key-pf-logo button:hover { background: #E3ECE8; color: #1E3A35; }
+.st-key-pf-logo button:focus:not(:active) { color: #1E3A35; border: 0; }
+.st-key-pf-logo button::before { content: ""; flex: none; width: 26px; height: 26px; border-radius: 50%;
+  background: radial-gradient(circle, #F3F6F4 0 5px, #3C7A6E 5.5px); }
+.st-key-pf-logo button p { white-space: nowrap; font-family: "Newsreader", Georgia, serif; font-size: 24px; font-weight: 500;
+  letter-spacing: -0.01em; }
+.st-key-pf-right { align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.st-key-pf-right button { color: #5E726D; font-size: 13px; min-height: 0; padding: 6px 10px; border-radius: 10px; }
+.st-key-pf-right button p { font-size: 13px; }
+.st-key-pf-right button:hover { color: #1E3A35; background: #E3ECE8; }
+.st-key-pf-right [data-testid="stPopover"] button { border: 0; background: none; }
+.st-key-pf-right [data-testid="stPopover"] button:hover { background: #E3ECE8; }
+
+/* ---- home ---- */
+.st-key-pf-home { align-items: center; gap: 56px; padding: 48px 0 64px; }
+.st-key-pf-hero { width: 100%; max-width: 680px; align-items: center; gap: 20px; }
+.pf-h1 { margin: 0; font-family: "Newsreader", Georgia, serif; font-weight: 400; font-size: clamp(40px, 6vw, 64px);
+  line-height: 1.05; letter-spacing: -0.02em; text-align: center; text-wrap: balance; color: #1E3A35; }
+.st-key-pf-chips { justify-content: center; gap: 8px; max-width: 640px; flex-wrap: wrap; }
+.st-key-pf-chips button { border: 1px solid #D5E2DD; background: #FAFCFB; color: #3B5550; padding: 8px 14px;
+  min-height: 0; }
+.st-key-pf-chips button p { font-size: 14px; }
+.st-key-pf-chips button:hover { background: #E3ECE8; border-color: #BCD1C9; color: #3B5550; }
+.st-key-pf-handwrite button { color: #5E726D; min-height: 0; }
+.st-key-pf-handwrite button p { font-size: 13px; }
+.pf-band { display: flex; align-items: flex-end; gap: 16px; width: 100%; max-width: 1180px; margin: 0 auto; }
+.pf-band figure { position: relative; margin: 0; min-width: 0; border-radius: 20px; overflow: hidden;
+  background: #E3ECE8; }
+.pf-band img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pf-band figcaption { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); font-size: 11px;
+  line-height: 1.3; padding: 3px 8px; border-radius: 999px; background: rgba(30,58,53,.55); opacity: 0;
+  transition: opacity .15s; }
+.pf-band figcaption a { color: #fff; text-decoration: none; }
+.pf-band figure:hover figcaption, .pf-band figure:focus-within figcaption { opacity: 1; }
+@media (max-width: 760px) { .pf-band figure:first-child, .pf-band figure:last-child { display: none; } }
+
+/* ---- search bar (home and the docked bar in a thread) ---- */
+[data-testid="stForm"]:has(.st-key-pf-bar), [data-testid="stForm"]:has(.st-key-pf-dockbar) { border: 0; padding: 0; }
+.st-key-pf-bar, .st-key-pf-dockbar { align-items: center; gap: 12px; width: 100%; }
+.st-key-pf-bar [data-testid="stTextInputRootElement"], .st-key-pf-dockbar [data-testid="stTextInputRootElement"] { background: #fff !important;
+  border: 1px solid #D5E2DD !important; border-radius: 28px; padding: 0 24px;
+  box-shadow: 0 1px 2px rgba(30,58,53,.04), 0 8px 24px rgba(30,58,53,.06); }
+.st-key-pf-bar [data-testid="stTextInputRootElement"] { min-height: 60px; }
+.st-key-pf-dockbar [data-testid="stTextInputRootElement"] { min-height: 56px; box-shadow: 0 8px 24px rgba(30,58,53,.06); }
+.st-key-pf-bar input, .st-key-pf-dockbar input { font-size: 17px; line-height: 1.4; color: #1E3A35;
+  padding: 0 !important; background: transparent !important; height: auto; }
+.st-key-pf-dockbar input { font-size: 16px; }
+.st-key-pf-bar input::placeholder, .st-key-pf-dockbar input::placeholder { color: #8A9B96; opacity: 1; }
+.st-key-pf-bar [data-testid="stTextInputRootElement"]:focus-within, .st-key-pf-dockbar [data-testid="stTextInputRootElement"]:focus-within {
+  border-color: #7FA89B !important; }
+.st-key-pf-send button, .st-key-pf-docksend button { flex: none; width: 60px; height: 60px; min-height: 0;
+  padding: 0; border-radius: 50%; border: 0; background: #3C7A6E; color: #fff;
+  box-shadow: 0 6px 18px rgba(60,122,110,.28); }
+.st-key-pf-docksend button { width: 56px; height: 56px; box-shadow: none; }
+.st-key-pf-send button:hover, .st-key-pf-docksend button:hover { background: #2F675C; color: #fff; }
+.st-key-pf-send button:focus:not(:active), .st-key-pf-docksend button:focus:not(:active) { color: #fff; }
+.st-key-pf-send [data-testid="stIconMaterial"], .st-key-pf-docksend [data-testid="stIconMaterial"] { font-size: 22px; }
+.st-key-pf-send [data-testid="stMarkdownContainer"], .st-key-pf-docksend [data-testid="stMarkdownContainer"] {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---- thread: question bubble, working indicator, answer card, docked bar ---- */
+.st-key-pf-thread { width: 100%; max-width: 960px; margin: 0 auto; gap: 24px; padding: 4px 0 40px; }
+.pf-bubble { margin-left: auto; width: fit-content; max-width: 80%; background: #3C7A6E; color: #fff;
+  border-radius: 22px 22px 6px 22px; padding: 14px 20px; font-size: 17px; line-height: 1.45;
+  overflow-wrap: anywhere; }
+.pf-working { display: flex; align-items: center; gap: 12px; color: #4E635E; font-size: 15px; }
+.pf-dots { display: inline-flex; gap: 5px; }
+.pf-dots span { width: 7px; height: 7px; border-radius: 50%; background: #3C7A6E;
+  animation: pfPulse 1s infinite ease-in-out; }
+.pf-dots span:nth-child(2) { animation-delay: .15s; } .pf-dots span:nth-child(3) { animation-delay: .3s; }
+.st-key-pf-card, .st-key-pf-editor, .st-key-pf-page-card { background: #fff; border: 1px solid #DCE6E1;
+  border-radius: 24px; padding: 32px; gap: 28px; }
+.st-key-pf-editor { gap: 16px; }
+.st-key-pf-editor-top { justify-content: space-between; }
+@media (max-width: 640px) { .st-key-pf-card, .st-key-pf-editor, .st-key-pf-page-card { padding: 20px; } }
+.pf-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.pf-eyebrow { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #3C7A6E; font-weight: 600; }
+.pf-read { display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
+.pf-interp { font-family: "Newsreader", Georgia, serif; font-size: 26px; line-height: 1.25; text-wrap: pretty; }
+.pf-count { display: flex; align-items: baseline; gap: 8px; }
+.pf-count b { font-family: "Newsreader", Georgia, serif; font-weight: 400; font-size: 64px; line-height: 1;
+  color: #2A5C52; }
+.pf-count span { font-size: 15px; color: #4E635E; }
+.pf-rule { background: #EEF4F1; border-radius: 14px; padding: 14px 18px; font-family: "JetBrains Mono", ui-monospace,
+  monospace; font-size: 14px; line-height: 1.6; color: #244741; overflow-x: auto; white-space: pre-wrap; }
+.pf-head + .pf-rule, .pf-read + .pf-rule { margin-top: 28px; }
+.pf-label { font-size: 14px; font-weight: 600; color: #1E3A35; }
+.pf-bars { display: flex; flex-direction: column; gap: 12px; }
+.pf-bar { display: grid; grid-template-columns: minmax(0, 180px) minmax(0, 1fr) 36px; align-items: center; gap: 14px;
+  font-size: 14px; }
+.pf-bar > span:first-child { color: #3B5550; overflow-wrap: anywhere; }
+.pf-bar > span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.pf-track { height: 10px; border-radius: 5px; background: #E6EEEA; }
+.pf-track div { height: 10px; border-radius: 5px; background: #7FA89B; }
+.pf-note { font-size: 13px; color: #5E726D; }
+.pf-callout { background: #F5F9F7; border: 1px solid #DCE6E1; border-radius: 14px; padding: 14px 18px;
+  font-size: 14px; line-height: 1.5; color: #3B5550; }
+.st-key-pf-actions { gap: 4px; flex-wrap: wrap; }
+.st-key-pf-actions button { color: #3C7A6E; min-height: 0; padding: 4px 10px; border-radius: 10px; }
+.st-key-pf-actions button p { font-size: 14px; }
+.st-key-pf-actions button:hover { background: #EEF4F1; color: #2A5C52; }
+/* sticky goes on Streamlit's wrapper: the keyed block is exactly as tall as its wrapper, so it can't stick */
+[data-testid="stLayoutWrapper"]:has(> .st-key-pf-dock) { position: sticky; bottom: 0; z-index: 10;
+  padding: 16px 0 28px; background: linear-gradient(to bottom, rgba(243,246,244,0), #F3F6F4 30%); }
+.st-key-pf-dock { width: 100%; max-width: 960px; margin: 0 auto; }
+
+/* ---- criteria and reports pages ---- */
+.st-key-pf-page { width: 100%; max-width: 1180px; margin: 0 auto; gap: 24px; padding: 16px 0 48px; }
+.pf-title { margin: 0; padding: 0 !important; font-family: "Newsreader", Georgia, serif; font-weight: 400; font-size: 40px;
+  line-height: 1.1; letter-spacing: -0.02em; }
+.pf-sub { margin: 6px 0 0; color: #5E726D; font-size: 15px; }
+</style>
+"""
 
 
 # ---------- data (cached per split, model, effort, and cache-file mtime) ----------
@@ -92,7 +241,15 @@ def load_gold() -> dict[str, dict]:
     return {i: derive(gold_extraction(r["labels"])) for i, r in load_rows("train").items()}
 
 
-# ---------- sidebar ----------
+# ---------- settings and app state ----------
+
+st.markdown(CSS, unsafe_allow_html=True)
+s = st.session_state
+for k, v in {"page": "ask", "view": "home", "asked": "", "pending": None, "editor_open": False,
+             "rule_text": '{"all": [["organ", "eq", "breast"]]}', "answer_type": "ids", "by": "(none)",
+             "uncovered": "", "result": None, "result_ctx": None, "ask_error": None,
+             "max_fallback": 100}.items():
+    s.setdefault(k, v)
 
 avail, unusable = available()
 if not avail:
@@ -100,41 +257,97 @@ if not avail:
              "`.venv/bin/python -m pathfinder.cli extract --split train --limit 210` first.")
     st.stop()
 
-with st.sidebar:
-    st.header("pathfinder")
-    splits = sorted(avail)
-    split = st.selectbox("Split", splits, index=splits.index("train") if "train" in splits else 0)
-    models = sorted(avail[split])
-    model = st.selectbox("Extraction model", models,
-                         index=models.index("gpt-5.4-mini") if "gpt-5.4-mini" in models else 0)
-    efforts = list(avail[split][model])
-    effort = st.selectbox("Reasoning effort", efforts, format_func=lambda e: e or "(none)",
-                          help="Only efforts that some saved extractions were made with are listed (the "
-                               "fingerprint includes the effort). Also used for translation and fallback calls.")
-    mtime = cache_path(split, model).stat().st_mtime
-    records = load_records(split, model, effort, mtime)
-    rows = load_rows(split)
-    texts = {i: rows[i]["report_text"] for i in records if i in rows}
-    catalog = load_catalog(split, model, effort, mtime)
+
+def _keep(key: str, options: list, preferred) -> None:
+    """Point a settings widget's state at a valid option before the widget is drawn.
+
+    The settings live in a popover that is drawn after the header label that
+    describes them, so the choices are resolved here first from session state.
+    """
+    if s.get(key) not in options:
+        s[key] = preferred if preferred in options else options[0]
+
+
+splits = sorted(avail)
+_keep("split", splits, "train")
+models = sorted(avail[s.split])
+_keep("model", models, "gpt-5.4-mini")
+efforts = list(avail[s.split][s.model])
+_keep("effort", efforts, efforts[0])
+split, model, effort = s.split, s.model, s.effort
+mtime = cache_path(split, model).stat().st_mtime
+records = load_records(split, model, effort, mtime)
+rows = load_rows(split)
+texts = {i: rows[i]["report_text"] for i in records if i in rows}
+catalog = load_catalog(split, model, effort, mtime)
+load_dotenv(REPO_ROOT / ".env")
+has_key = bool(os.environ.get("OPENAI_API_KEY"))
+gold = load_gold() if split == "train" else {}
+CTX = (split, model, effort, mtime)  # a result is only shown under the settings it was computed with
+
+
+def reset():
+    """Logo click: back to the empty home view (settings and the rule editor text are kept)."""
+    s.page, s.view, s.asked, s.pending, s.result, s.ask_error, s.editor_open = \
+        "ask", "home", "", None, None, None, False
+
+
+def go(page: str):
+    s.page = page
+
+
+def settings_panel():
+    st.markdown('<span class="pf-label">Settings</span>', unsafe_allow_html=True)
+    st.selectbox("Split", splits, key="split")
+    st.selectbox("Extraction model", models, key="model")
+    st.selectbox("Reasoning effort", efforts, key="effort", format_func=lambda e: e or "(none)",
+                 help="Only efforts that some saved extractions were made with are listed (the "
+                      "fingerprint includes the effort). Also used for translation and fallback calls.")
+    st.number_input("Max fallback calls", min_value=0, max_value=5000, step=25, key="max_fallback",
+                    help="The fallback is refused if more reports than this need an LLM call.")
     st.caption(f"{len(records):,} saved {split} records ({len(rows):,} reports in {split}.jsonl)")
     if unusable:
         st.caption("Not listed (no rows match the current prompt and schema; re-run extract): "
                    + ", ".join(unusable))
-    max_fallback = st.number_input("Max fallback calls", min_value=0, max_value=5000, value=100, step=25,
-                                   help="The fallback is refused if more reports than this need an LLM call.")
-    load_dotenv(REPO_ROOT / ".env")
-    has_key = bool(os.environ.get("OPENAI_API_KEY"))
     (st.success if has_key else st.warning)(
         "OPENAI_API_KEY found" if has_key else "No OPENAI_API_KEY: only hand-written rules work")
 
-gold = load_gold() if split == "train" else {}
-CTX = (split, model, effort, mtime)  # a result is only shown under the settings it was computed with
+
+def header():
+    # The active tab is darker and bold; Streamlit gives the button the class st-key-nav-<page>.
+    st.markdown(f"<style>.st-key-nav-{s.page} button {{ color: #1E3A35; }} .st-key-nav-{s.page} button p "
+                "{ font-weight: 600; }</style>", unsafe_allow_html=True)
+    with st.container(horizontal=True, key="pf-header"):
+        with st.container(key="pf-logo", width="content"):
+            st.button("pathfinder", on_click=reset, help="Back to start")
+        with st.container(horizontal=True, key="pf-right", width="content"):
+            for page, label in (("ask", "Ask"), ("criteria", "Criteria"), ("reports", "Reports")):
+                st.button(label, type="tertiary", on_click=go, args=(page,), key=f"nav-{page}")
+            with st.popover(f"{split} · {model} · {len(records):,} reports", icon=":material/tune:",
+                            help="Settings"):
+                settings_panel()
 
 
 # ---------- shared pieces ----------
 
 def _cell(v):
     return "" if v is None else (", ".join(map(str, v)) if isinstance(v, list) else str(v))
+
+
+def esc(v) -> str:
+    return html.escape(str(v))
+
+
+@contextmanager
+def working(message: str):
+    """The design's three pulsing dots with a message, shown while a slow call runs."""
+    slot = st.empty()
+    slot.markdown(f'<div class="pf-working"><span class="pf-dots"><span></span><span></span><span></span></span>'
+                  f'<span>{esc(message)}</span></div>', unsafe_allow_html=True)
+    try:
+        yield
+    finally:
+        slot.empty()
 
 
 def show_report(rid: str, key: str):
@@ -144,7 +357,7 @@ def show_report(rid: str, key: str):
         return
     left, right = st.columns([1, 1])
     with left:
-        st.markdown(f"**{rid}**")
+        st.markdown(f'<span class="pf-label pf-mono">{esc(rid)}</span>', unsafe_allow_html=True)
         st.code(texts.get(rid, ""), language="text", wrap_lines=True, height=560)
     with right:
         rec = records[rid]
@@ -173,18 +386,20 @@ def id_table(ids: list[str], key: str, extra: dict[str, dict[str, str]] | None =
     would otherwise point at the wrong report, or past the end of the list.
     """
     if not ids:
-        st.info("No reports.")
+        st.markdown('<span class="pf-note">No reports.</span>', unsafe_allow_html=True)
         return None
     digest = hashlib.sha1("\n".join(ids).encode()).hexdigest()[:10]
-    data = [{"id": i, **{c: _cell(records.get(i, {}).get(c)) for c in SUMMARY_COLS},
+    data = [{"id": i, **{h: _cell(records.get(i, {}).get(c)) for c, h in SUMMARY_COLS.items()},
              **{name: col.get(i, "") for name, col in (extra or {}).items()}} for i in ids]
     ev = st.dataframe(pd.DataFrame(data), hide_index=True, width="stretch",
-                      on_select="rerun", selection_mode="single-row", key=f"{key}-{digest}", height=320)
+                      on_select="rerun", selection_mode="single-row", key=f"{key}-{digest}",
+                      height=min(320, 38 + 35 * len(ids)),
+                      column_config={"id": st.column_config.TextColumn(width="medium")})
     sel = ev.selection.rows if ev and ev.selection else []
     return ids[sel[0]] if sel and sel[0] < len(ids) else None
 
 
-# ---------- tab: ask ----------
+# ---------- page: ask ----------
 
 def run(question, rule=None, answer_type="ids", by=None, uncovered=None, approved=None):
     """Run a query. The fallback spends only when `approved` (the estimate the user clicked)
@@ -193,53 +408,114 @@ def run(question, rule=None, answer_type="ids", by=None, uncovered=None, approve
         return approved is not None and est.calls <= approved.calls and est.input_tokens <= approved.input_tokens
 
     try:
-        res = run_query(question, records, texts, model, confirm, int(max_fallback), effort or None,
+        res = run_query(question, records, texts, model, confirm, int(s.max_fallback), effort or None,
                         rule=rule, answer_type=answer_type, breakdown_by=by, uncovered=uncovered,
                         catalog=catalog)
     except Exception as e:  # missing key, network, rate limit: show it, keep the app alive
-        st.session_state.ask_error = f"{type(e).__name__}: {e}"
+        s.ask_error = f"{type(e).__name__}: {e}"
         return None
-    st.session_state.ask_error = None
+    s.ask_error = None
     return res
 
 
-def set_result(res, inputs):
-    st.session_state.result = res
-    st.session_state.result_ctx = CTX
-    st.session_state.result_inputs = inputs
+def set_result(res):
+    s.result = res
+    s.result_ctx = CTX
 
 
-def editor_inputs(question):
-    s = st.session_state
-    return ("write", question, s.rule_text, s.answer_type, s.by, s.uncovered)
+def ask(question: str, **rule_inputs):
+    """Queue a question (and optionally a hand-written rule) and switch to the thread view.
+    The query runs on the next script run, under the working indicator."""
+    s.page, s.view, s.asked, s.result, s.ask_error = "ask", "thread", question, None, None
+    s.pending = {"question": question, **rule_inputs}
 
 
 def load_rule_into_editor():
-    res = st.session_state.result
-    st.session_state.mode = "Write the rule"
-    st.session_state.rule_text = json.dumps(res.rule, indent=1)
-    st.session_state.answer_type = res.answer_type
-    st.session_state.by = res.breakdown_by or "(none)"
-    st.session_state.uncovered = res.uncovered or ""
+    res = s.result
+    s.rule_text = json.dumps(res.rule, indent=1)
+    s.answer_type = res.answer_type
+    s.by = res.breakdown_by or "(none)"
+    s.uncovered = res.uncovered or ""
+    s.editor_open = True
 
 
-def tab_ask():
-    for k, v in {"mode": "Translate with the LLM", "rule_text": '{"all": [["organ", "eq", "breast"]]}',
-                 "answer_type": "ids", "by": "(none)", "uncovered": "", "result": None,
-                 "result_ctx": None, "result_inputs": None, "ask_error": None}.items():
-        st.session_state.setdefault(k, v)
-    if st.session_state.result is not None and st.session_state.result_ctx != CTX:
-        st.session_state.result = None
+def open_editor():
+    s.page, s.view, s.editor_open = "ask", "thread", True
+
+
+def search_bar(form_key: str, bar_key: str, send_key: str, placeholder: str):
+    """Rounded input with the round send button. Enter submits; the input clears on send."""
+    with st.form(form_key, clear_on_submit=True, border=False):
+        with st.container(horizontal=True, vertical_alignment="center", key=bar_key):
+            q = st.text_input("Question", placeholder=placeholder, label_visibility="collapsed",
+                              key=f"{form_key}-q")
+            with st.container(key=send_key, width="content"):
+                sent = st.form_submit_button("Search", icon=":material/arrow_upward:")
+    if sent and q.strip():
+        ask(q.strip())
+        st.rerun()
+
+
+def page_ask():
+    if s.result is not None and s.result_ctx != CTX:
+        s.result = None
         st.info("Cleared the previous result: the split, model, effort or extraction file changed.")
+    if s.view == "home":
+        home()
+    else:
+        thread()
 
-    ex = st.selectbox("Example questions", EXAMPLES, format_func=lambda s: s or "(pick one, or type below)")
-    question = st.text_area("Question", value=ex, height=80, placeholder="e.g. LVI-positive breast cancers over 2 cm")
-    mode = st.radio("How to get the rule", ["Translate with the LLM", "Write the rule"], horizontal=True,
-                    key="mode", help="Writing the rule yourself makes no API calls (unless you fill in the "
-                                     "fallback question and approve it).")
-    if mode == "Write the rule":
+
+def home():
+    with st.container(key="pf-home"):
+        with st.container(key="pf-hero"):
+            st.markdown('<h1 class="pf-h1">Find the right patients.</h1>', unsafe_allow_html=True)
+            search_bar("pf-form-home", "pf-bar", "pf-send", "e.g. LVI-positive breast cancers over 2 cm")
+            with st.container(horizontal=True, key="pf-chips", width="content"):
+                for i, (label, question) in enumerate(EXAMPLES):
+                    st.button(label, key=f"ex-{i}", on_click=ask, args=(question,), help=question)
+            with st.container(key="pf-handwrite", width="content"):
+                st.button("or write the rule yourself (no API calls)", type="tertiary", on_click=open_editor)
+        figures = "".join(
+            f'<figure style="flex:{grow};height:{h}px"><img src="{COMMONS}Special:FilePath/{f}?width=900" '
+            f'alt="{esc(f.rsplit(".", 1)[0].replace("_", " "))}" loading="lazy">'
+            f'<figcaption><a href="{COMMONS}File:{f}" target="_blank" rel="noopener">{esc(credit)}</a>'
+            f'</figcaption></figure>' for f, credit, h, grow in BAND)
+        st.markdown(f'<div class="pf-band">{figures}</div>', unsafe_allow_html=True)
+
+
+def thread():
+    with st.container(key="pf-thread"):
+        if s.asked:
+            st.markdown(f'<div class="pf-bubble">{esc(s.asked)}</div>', unsafe_allow_html=True)
+        p = s.pending
+        if p is not None:
+            s.pending = None  # run once, even if the call fails
+            hand = p.get("rule") is not None
+            with working("Running the rule…" if hand else "Translating the question into a rule…"):
+                set_result(run(p["question"], p.get("rule"), p.get("answer_type", "ids"), p.get("by"),
+                               p.get("uncovered")))
+        if s.ask_error:
+            st.error(s.ask_error)
+        if s.result is not None:
+            with st.container(key="pf-card"):
+                show_result(s.result)
+        if s.editor_open:
+            editor()
+    with st.container(key="pf-dock"):
+        search_bar("pf-form-dock", "pf-dockbar", "pf-docksend", "Ask another question")
+
+
+def editor():
+    """Hand-written rule: runs the engine directly, no translation call."""
+    with st.container(key="pf-editor"):
+        with st.container(horizontal=True, vertical_alignment="center", key="pf-editor-top"):
+            st.markdown('<span class="pf-eyebrow">Write the rule</span>', unsafe_allow_html=True)
+            st.button("Close", type="tertiary", key="editor-close", icon=":material/close:",
+                      on_click=lambda: s.update(editor_open=False))
         c1, c2 = st.columns([3, 2])
         with c1:
+            # persist_state keeps the editor's values while the card is closed or another page is shown.
             st.text_area("Rule JSON", key="rule_text", height=180, persist_state="page",
                          help='Condition: [field, op, value]. Group: {"all": [...]}, {"any": [...]}, {"not": rule}.')
         with c2:
@@ -253,183 +529,201 @@ def tab_ask():
                                         "values": ", ".join(map(str, f.allowed or f.seen[:12])),
                                         "description": f.description} for f in catalog.values()]),
                          hide_index=True, width="stretch")
-        inputs = editor_inputs(question)
-    else:
-        inputs = ("translate", question)
-
-    if st.button("Run", type="primary"):
-        if mode == "Translate with the LLM":
-            if not question.strip():
-                st.warning("Type a question first.")
-                return
-            with st.spinner("Translating the question into a rule..."):
-                set_result(run(question), inputs)
-        else:
+        if st.button("Run this rule", type="primary", icon=":material/play_arrow:"):
             try:
-                rule = json.loads(st.session_state.rule_text)
+                rule = json.loads(s.rule_text)
             except json.JSONDecodeError as e:
-                st.session_state.result = None
                 st.error(f"Rule is not valid JSON: {e}")
                 return
-            by = None if st.session_state.by == "(none)" else st.session_state.by
-            set_result(run(question or "(hand-written rule)", rule, st.session_state.answer_type, by,
-                           st.session_state.uncovered.strip() or None), inputs)
+            if not isinstance(rule, (dict, list)):  # e.g. `null` would otherwise fall through to a translation call
+                st.error('Rule must be a condition [field, op, value] or a group like {"all": [...]}.')
+                return
+            by = None if s.by == "(none)" else s.by
+            ask(s.asked or "(hand-written rule)", rule=rule, answer_type=s.answer_type, by=by,
+                uncovered=s.uncovered.strip() or None)
+            st.rerun()
 
-    if st.session_state.ask_error:
-        st.error(st.session_state.ask_error)
-    res = st.session_state.result
-    if res is not None:
-        if st.session_state.result_inputs != inputs:
-            st.caption(":orange[The inputs above changed since this result was computed. Click Run to update it.]")
-        show_result(res)
+
+def translation_note(res):
+    """Footnote with the translation's cost, and its rejected attempts if any."""
+    t = res.translation
+    if not t:
+        st.markdown('<span class="pf-note">Hand-written rule: no translation call.</span>',
+                    unsafe_allow_html=True)
+        return
+    fixes = len(t.attempts) - 1
+    st.markdown(f'<span class="pf-note">Translation: {t.usage["calls"]} LLM call(s), '
+                f'{t.usage["input_tokens"]:,} in / {t.usage["output_tokens"]:,} out tokens'
+                + (f", {fixes} repair(s)" if fixes else "") + "</span>", unsafe_allow_html=True)
+    rejected = t.attempts[:-1] if t.ok else t.attempts
+    if rejected:
+        with st.expander(f"{len(rejected)} rejected attempt(s)"):
+            for i, a in enumerate(rejected, 1):
+                st.markdown(f"**Attempt {i}**")
+                st.code(a["rule_json"] or "(no rule)", language="json")
+                for err in a["errors"]:
+                    st.markdown(f"- {err}")
 
 
 def show_result(res):
-    st.divider()
-    t = res.translation
-    if t:
-        fixes = len(t.attempts) - 1
-        st.caption(f"Translation: {t.usage['calls']} LLM call(s), {t.usage['input_tokens']:,} in / "
-                   f"{t.usage['output_tokens']:,} out tokens" + (f", {fixes} repair(s)" if fixes else ""))
-        rejected = t.attempts[:-1] if t.ok else t.attempts
-        if rejected:
-            with st.expander(f"{len(rejected)} rejected attempt(s)"):
-                for i, a in enumerate(rejected, 1):
-                    st.markdown(f"**Attempt {i}**")
-                    st.code(a["rule_json"] or "(no rule)", language="json")
-                    for err in a["errors"]:
-                        st.markdown(f"- {err}")
     if res.error:
         st.error(res.error)
+        translation_note(res)
         return
 
-    st.markdown(f"**Read as:** {res.interpretation}")
-    c1, c2 = st.columns(2)
-    c1.code(format_rule(res.rule), language="text")
-    c2.code(json.dumps(res.rule), language="json", wrap_lines=True)
-    st.button("Edit this rule", on_click=load_rule_into_editor,
-              help="Copy the rule into the editor to tweak and re-run without a translation call.")
-
     fb = res.fallback
+    pending_fb = bool(fb and fb.skipped_reason)
+    count = "—" if pending_fb else f"{res.count:,}"
+    unit = "awaiting the fallback" if pending_fb else ("report" if res.count == 1 else "reports")
+    st.markdown(
+        f'<div class="pf-head"><div class="pf-read"><span class="pf-eyebrow">Read as</span>'
+        f'<span class="pf-interp">{esc(res.interpretation)}</span></div>'
+        f'<div class="pf-count"><b>{count}</b><span>{unit}</span></div></div>'
+        f'<div class="pf-rule">{esc(format_rule(res.rule))}</div>', unsafe_allow_html=True)
+    with st.container(horizontal=True, key="pf-actions"):
+        st.button("Edit this rule", type="tertiary", icon=":material/edit:", on_click=load_rule_into_editor,
+                  help="Copy the rule into the editor to tweak and re-run without a translation call.")
+        with st.popover("Rule JSON", icon=":material/data_object:", type="tertiary"):
+            st.code(json.dumps(res.rule), language="json", wrap_lines=True)
+        st.download_button("Download result JSON", json.dumps(to_dict(res), indent=1), type="tertiary",
+                           icon=":material/download:", on_click="ignore", file_name="query_result.json", mime="application/json")
+
     if res.uncovered:
-        st.markdown(f"**Outside the schema:** {res.uncovered}  \n"
-                    f"The rule alone (covered part) matches **{len(res.rule_ids)}** report(s).")
+        st.markdown(f'<div class="pf-callout"><b>Outside the schema:</b> {esc(res.uncovered)}<br>'
+                    f'The rule alone (covered part) matches <b>{len(res.rule_ids)}</b> report(s).</div>',
+                    unsafe_allow_html=True)
         if fb and fb.estimate:
             e = fb.estimate
-            st.caption(f"Fallback: {e.reports} candidate(s), {e.cached} cached, {e.calls} needing a call "
-                       f"(~{e.input_tokens:,} in / ~{e.output_tokens:,} out tokens estimated).")
-        if fb and fb.skipped_reason:
+            st.markdown(f'<span class="pf-note">Fallback: {e.reports} candidate(s), {e.cached} cached, '
+                        f'{e.calls} needing a call (~{e.input_tokens:,} in / ~{e.output_tokens:,} out tokens '
+                        'estimated).</span>', unsafe_allow_html=True)
+        if pending_fb:
             e = fb.estimate
             st.warning(f"No final answer yet: checking the uncovered part needs {e.calls} LLM call(s) to "
                        f"{model}. Nothing has been sent.")
-            if e.calls > max_fallback:
-                st.info(f"That is above the cap of {int(max_fallback)}. Narrow the question, or raise "
-                        "**Max fallback calls** in the sidebar to get an approve button.")
+            if e.calls > s.max_fallback:
+                st.info(f"That is above the cap of {int(s.max_fallback)}. Narrow the question, or raise "
+                        "**Max fallback calls** in Settings (top right) to get an approve button.")
             elif st.button(f"Spend ~{e.input_tokens + e.output_tokens:,} tokens on {e.calls} call(s)",
                            type="primary"):
-                with st.spinner("Checking each report..."):
+                with working("Checking each report…"):
                     new = run(res.question, res.rule, res.answer_type, res.breakdown_by, res.uncovered,
                               approved=e)
                 if new is not None:
                     new.translation, new.interpretation = res.translation, res.interpretation
-                    set_result(new, st.session_state.result_inputs)
+                    set_result(new)
                 st.rerun()
-            st.markdown("The covered part alone:")
+            st.markdown('<span class="pf-label">The covered part alone</span>', unsafe_allow_html=True)
             pick = id_table(res.rule_ids, "rule-only")
             if pick:
                 show_report(pick, "ask")
+            translation_note(res)
             return
         if fb:
-            st.caption(f"Fallback used {fb.usage['calls']} call(s), {fb.usage['input_tokens']:,} in / "
-                       f"{fb.usage['output_tokens']:,} out tokens. yes={len(fb.matched)} no={len(fb.rejected)} "
-                       f"unverified-quote={len(fb.unverified)} failed={len(fb.failed)}")
+            st.markdown(f'<span class="pf-note">Fallback used {fb.usage["calls"]} call(s), '
+                        f'{fb.usage["input_tokens"]:,} in / {fb.usage["output_tokens"]:,} out tokens. '
+                        f'yes={len(fb.matched)} no={len(fb.rejected)} unverified-quote={len(fb.unverified)} '
+                        f'failed={len(fb.failed)}</span>', unsafe_allow_html=True)
 
-    m1, m2 = st.columns([1, 3])
-    m1.metric("Count", res.count)
     if not res.complete:
-        m2.warning(f"Lower bound: {len(fb.failed)} report(s) could not be checked.")
-    st.download_button("Download result JSON", json.dumps(to_dict(res), indent=1),
-                       file_name="query_result.json", mime="application/json")
+        st.warning(f"Lower bound: {len(fb.failed)} report(s) could not be checked.")
 
-    if res.answer_type == "breakdown" and res.breakdown_by:
-        df = pd.DataFrame(res.breakdown, columns=["value", "count"])
-        df["value"] = df["value"].astype(str)
-        b1, b2 = st.columns([2, 3])
-        b1.dataframe(df.rename(columns={"value": res.breakdown_by}), hide_index=True, width="stretch")
-        chart = alt.Chart(df).mark_bar().encode(
-            x=alt.X("count:Q", title="reports"),
-            y=alt.Y("value:N", sort="-x", title=res.breakdown_by, axis=alt.Axis(labelLimit=0)),
-            tooltip=["value", "count"])
-        b2.altair_chart(chart, width="stretch")
+    if res.answer_type == "breakdown" and res.breakdown_by and res.breakdown:
+        top = max(n for _, n in res.breakdown) or 1
+        bars = "".join(f'<div class="pf-bar"><span>{esc(v)}</span><div class="pf-track">'
+                       f'<div style="width:{n / top * 100:.1f}%"></div></div><span>{n}</span></div>'
+                       for v, n in res.breakdown)
+        st.markdown(f'<div class="pf-bars"><span class="pf-label">By {esc(res.breakdown_by)}</span>{bars}</div>',
+                    unsafe_allow_html=True)
+
     extra = {"evidence": fb.evidence} if fb else {}
-    with st.expander(f"Matching reports ({res.count})", expanded=res.answer_type == "ids"):
-        pick = id_table(res.ids, "result-ids", extra)
+    st.markdown('<span class="pf-label">Matching reports</span>', unsafe_allow_html=True)
+    pick = id_table(res.ids, "result-ids", extra)
     if pick:
         show_report(pick, "ask")
+    elif res.ids:
+        st.markdown('<span class="pf-note">Click a row to read the report next to its extracted record.</span>',
+                    unsafe_allow_html=True)
     if fb and fb.unverified:
         with st.expander(f"Unverified: {len(fb.unverified)} report(s) said yes, but the quote was not found "
                          "in the text, so they are excluded"):
             pick_u = id_table(fb.unverified, "unverified-ids", {"evidence": fb.evidence})
         if pick_u:
             show_report(pick_u, "unverified")
+    translation_note(res)
 
 
-# ---------- tab: criteria ----------
+# ---------- page: criteria ----------
 
-def tab_criteria():
+def page_title(title: str, sub: str):
+    st.markdown(f'<div><h2 class="pf-title">{esc(title)}</h2><p class="pf-sub">{esc(sub)}</p></div>',
+                unsafe_allow_html=True)
+
+
+def page_criteria():
+    page_title("Criteria", "The 30 rules scored against the train answer key.")
     if split != "train":
-        st.info("Gold answers exist only for train. Switch the split to train.")
+        st.info("Gold answers exist only for train. Switch the split to train in Settings (top right).")
         return
     rules = load_rules()
     texts_by_id = {c["id"]: c["text"] for c in json.loads((DATA / "criteria.json").read_text())}
     gold_answers = json.loads((DATA / "criteria_train_answers.json").read_text())
     pred = match_all(records, rules)
     scores = score_criteria(pred, gold_answers, set(records))
-    st.metric(f"Mean F1 over {scores['_n_scored']} criteria with gold ids ({len(records):,} train records)",
-              f"{scores['_mean_f1']:.4f}")
-    cids = [c for c in scores if not c.startswith("_")]
-    table = pd.DataFrame([{"id": c, "F1": round(scores[c]["f1"], 3), "P": round(scores[c]["precision"], 3),
-                           "R": round(scores[c]["recall"], 3), "pred": scores[c]["n_pred"],
-                           "gold": scores[c]["n_gold"], "criterion": texts_by_id.get(c, "")} for c in cids])
-    ev = st.dataframe(table, hide_index=True, width="stretch", on_select="rerun",
-                      selection_mode="single-row", key=f"crit-table-{len(records)}", height=400,
-                      column_config={"criterion": st.column_config.TextColumn(width="large")})
-    sel = ev.selection.rows if ev and ev.selection else []
-    if not sel or sel[0] >= len(cids):
-        st.caption("Click a row to see its rule and its false positives and negatives.")
-        return
-    cid = cids[sel[0]]
-    s = scores[cid]
-    lists = {"fp": s["fp"], "fn": s["fn"],
-             "tp": sorted(set(pred[cid]) & set(gold_answers[cid]) & set(records))}
-    names = {"fp": "False positives", "fn": "False negatives", "tp": "True positives"}
-    st.subheader(f"{cid}: {texts_by_id.get(cid, '')}")
-    st.code(format_rule(rules[cid]["rule"]), language="text")
-    first = next((i for i, k in enumerate(lists) if lists[k]), 0)
-    kind = st.radio("Show", list(lists), index=first, horizontal=True, key=f"kind-{cid}",
-                    format_func=lambda k: f"{names[k]} ({len(lists[k])})")
-    pick = id_table(lists[kind], f"crit-ids-{cid}-{kind}")
-    if pick:
-        show_report(pick, "crit")
+    with st.container(key="pf-page-card"):
+        st.markdown(f'<div class="pf-head"><div class="pf-read"><span class="pf-eyebrow">Mean F1</span>'
+                    f'<span class="pf-interp">over {scores["_n_scored"]} criteria with gold ids '
+                    f'({len(records):,} train records)</span></div><div class="pf-count">'
+                    f'<b>{scores["_mean_f1"]:.4f}</b></div></div>', unsafe_allow_html=True)
+        cids = [c for c in scores if not c.startswith("_")]
+        table = pd.DataFrame([{"id": c, "F1": round(scores[c]["f1"], 3), "P": round(scores[c]["precision"], 3),
+                               "R": round(scores[c]["recall"], 3), "pred": scores[c]["n_pred"],
+                               "gold": scores[c]["n_gold"], "criterion": texts_by_id.get(c, "")} for c in cids])
+        ev = st.dataframe(table, hide_index=True, width="stretch", on_select="rerun",
+                          selection_mode="single-row", key=f"crit-table-{len(records)}", height=400,
+                          column_config={"criterion": st.column_config.TextColumn(width="large")})
+        sel = ev.selection.rows if ev and ev.selection else []
+        if not sel or sel[0] >= len(cids):
+            st.markdown('<span class="pf-note">Click a row to see its rule and its false positives and '
+                        'negatives.</span>', unsafe_allow_html=True)
+            return
+        cid = cids[sel[0]]
+        sc = scores[cid]
+        lists = {"fp": sc["fp"], "fn": sc["fn"],
+                 "tp": sorted(set(pred[cid]) & set(gold_answers[cid]) & set(records))}
+        names = {"fp": "False positives", "fn": "False negatives", "tp": "True positives"}
+        st.markdown(f'<div class="pf-read" style="max-width:none"><span class="pf-eyebrow">{esc(cid)}</span>'
+                    f'<span class="pf-interp">{esc(texts_by_id.get(cid, ""))}</span></div>'
+                    f'<div class="pf-rule">{esc(format_rule(rules[cid]["rule"]))}</div>', unsafe_allow_html=True)
+        first = next((i for i, k in enumerate(lists) if lists[k]), 0)
+        kind = st.radio("Show", list(lists), index=first, horizontal=True, key=f"kind-{cid}",
+                        format_func=lambda k: f"{names[k]} ({len(lists[k])})")
+        pick = id_table(lists[kind], f"crit-ids-{cid}-{kind}")
+        if pick:
+            show_report(pick, "crit")
 
 
-# ---------- tab: reports ----------
+# ---------- page: reports ----------
 
-def tab_reports():
+def page_reports():
+    page_title("Reports", f"Look up any saved {split} report by id.")
     ids = sorted(records)
-    q = st.text_input("Report id (or part of it)", placeholder="SYN-a985f38840").strip().lower()
-    match = [i for i in ids if q in i.lower()] if q else ids
-    if not match:
-        st.warning("No saved record has that id.")
-        return
-    rid = st.selectbox(f"{len(match):,} report(s)", match)
-    show_report(rid, "browse")
+    with st.container(key="pf-page-card"):
+        q = st.text_input("Report id (or part of it)", placeholder="SYN-a985f38840").strip().lower()
+        match = [i for i in ids if q in i.lower()] if q else ids
+        if not match:
+            st.warning("No saved record has that id.")
+            return
+        rid = st.selectbox(f"{len(match):,} report(s)", match)
+        show_report(rid, "browse")
 
 
-tabs = st.tabs(["Ask", "Criteria", "Reports"])
-with tabs[0]:
-    tab_ask()
-with tabs[1]:
-    tab_criteria()
-with tabs[2]:
-    tab_reports()
+header()
+if s.page == "criteria":
+    with st.container(key="pf-page"):
+        page_criteria()
+elif s.page == "reports":
+    with st.container(key="pf-page"):
+        page_reports()
+else:
+    page_ask()
