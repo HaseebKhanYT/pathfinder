@@ -3,8 +3,8 @@
     .venv/bin/streamlit run streamlit_app.py
 
 Reads the saved extractions in outputs/extractions/ (run `cli extract` first).
-Writing a rule by hand, scoring the criteria, and browsing reports make no API
-calls. Translating a question makes 1 to 4 calls. The per-report fallback runs
+Scoring the criteria and browsing reports make no API calls. Answering a
+question makes 1 to 4 translation calls; the rule is never shown to the user. The per-report fallback runs
 only after you click the button that shows its cost estimate, and only if the
 fresh estimate is no larger than the one on the button.
 
@@ -105,8 +105,6 @@ a { color: #3C7A6E; } a:hover { color: #2A5C52; }
   min-height: 0; }
 .st-key-pf-chips button p { font-size: 14px; }
 .st-key-pf-chips button:hover { background: #E3ECE8; border-color: #BCD1C9; color: #3B5550; }
-.st-key-pf-handwrite button { color: #5E726D; min-height: 0; }
-.st-key-pf-handwrite button p { font-size: 13px; }
 .pf-band { display: flex; align-items: flex-end; gap: 16px; width: 100%; max-width: 1180px; margin: 0 auto; }
 .pf-band figure { position: relative; margin: 0; min-width: 0; border-radius: 20px; overflow: hidden;
   background: #E3ECE8; }
@@ -152,11 +150,9 @@ a { color: #3C7A6E; } a:hover { color: #2A5C52; }
 .pf-dots span { width: 7px; height: 7px; border-radius: 50%; background: #3C7A6E;
   animation: pfPulse 1s infinite ease-in-out; }
 .pf-dots span:nth-child(2) { animation-delay: .15s; } .pf-dots span:nth-child(3) { animation-delay: .3s; }
-.st-key-pf-card, .st-key-pf-editor, .st-key-pf-page-card { background: #fff; border: 1px solid #DCE6E1;
+.st-key-pf-card, .st-key-pf-page-card { background: #fff; border: 1px solid #DCE6E1;
   border-radius: 24px; padding: 32px; gap: 28px; }
-.st-key-pf-editor { gap: 16px; }
-.st-key-pf-editor-top { justify-content: space-between; }
-@media (max-width: 640px) { .st-key-pf-card, .st-key-pf-editor, .st-key-pf-page-card { padding: 20px; } }
+@media (max-width: 640px) { .st-key-pf-card, .st-key-pf-page-card { padding: 20px; } }
 .pf-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .pf-eyebrow { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #3C7A6E; font-weight: 600; }
 .pf-read { display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
@@ -245,9 +241,8 @@ def load_gold() -> dict[str, dict]:
 
 st.markdown(CSS, unsafe_allow_html=True)
 s = st.session_state
-for k, v in {"page": "ask", "view": "home", "asked": "", "pending": None, "editor_open": False,
-             "rule_text": '{"all": [["organ", "eq", "breast"]]}', "answer_type": "ids", "by": "(none)",
-             "uncovered": "", "result": None, "result_ctx": None, "ask_error": None,
+for k, v in {"page": "ask", "view": "home", "asked": "", "pending": None,
+             "result": None, "result_ctx": None, "ask_error": None,
              "max_fallback": 100}.items():
     s.setdefault(k, v)
 
@@ -287,9 +282,8 @@ CTX = (split, model, effort, mtime)  # a result is only shown under the settings
 
 
 def reset():
-    """Logo click: back to the empty home view (settings and the rule editor text are kept)."""
-    s.page, s.view, s.asked, s.pending, s.result, s.ask_error, s.editor_open = \
-        "ask", "home", "", None, None, None, False
+    """Logo click: back to the empty home view (settings are kept)."""
+    s.page, s.view, s.asked, s.pending, s.result, s.ask_error = "ask", "home", "", None, None, None
 
 
 def go(page: str):
@@ -310,7 +304,7 @@ def settings_panel():
         st.caption("Not listed (no rows match the current prompt and schema; re-run extract): "
                    + ", ".join(unusable))
     (st.success if has_key else st.warning)(
-        "OPENAI_API_KEY found" if has_key else "No OPENAI_API_KEY: only hand-written rules work")
+        "OPENAI_API_KEY found" if has_key else "No OPENAI_API_KEY: questions cannot be answered")
 
 
 def header():
@@ -423,24 +417,11 @@ def set_result(res):
     s.result_ctx = CTX
 
 
-def ask(question: str, **rule_inputs):
-    """Queue a question (and optionally a hand-written rule) and switch to the thread view.
+def ask(question: str):
+    """Queue a question and switch to the thread view.
     The query runs on the next script run, under the working indicator."""
     s.page, s.view, s.asked, s.result, s.ask_error = "ask", "thread", question, None, None
-    s.pending = {"question": question, **rule_inputs}
-
-
-def load_rule_into_editor():
-    res = s.result
-    s.rule_text = json.dumps(res.rule, indent=1)
-    s.answer_type = res.answer_type
-    s.by = res.breakdown_by or "(none)"
-    s.uncovered = res.uncovered or ""
-    s.editor_open = True
-
-
-def open_editor():
-    s.page, s.view, s.editor_open = "ask", "thread", True
+    s.pending = question
 
 
 def search_bar(form_key: str, bar_key: str, send_key: str, placeholder: str):
@@ -474,8 +455,6 @@ def home():
             with st.container(horizontal=True, key="pf-chips", width="content"):
                 for i, (label, question) in enumerate(EXAMPLES):
                     st.button(label, key=f"ex-{i}", on_click=ask, args=(question,), help=question)
-            with st.container(key="pf-handwrite", width="content"):
-                st.button("or write the rule yourself (no API calls)", type="tertiary", on_click=open_editor)
         figures = "".join(
             f'<figure style="flex:{grow};height:{h}px"><img src="{COMMONS}Special:FilePath/{f}?width=900" '
             f'alt="{esc(f.rsplit(".", 1)[0].replace("_", " "))}" loading="lazy">'
@@ -488,81 +467,28 @@ def thread():
     with st.container(key="pf-thread"):
         if s.asked:
             st.markdown(f'<div class="pf-bubble">{esc(s.asked)}</div>', unsafe_allow_html=True)
-        p = s.pending
-        if p is not None:
+        question = s.pending
+        if question is not None:
             s.pending = None  # run once, even if the call fails
-            hand = p.get("rule") is not None
-            with working("Running the rule…" if hand else "Translating the question into a rule…"):
-                set_result(run(p["question"], p.get("rule"), p.get("answer_type", "ids"), p.get("by"),
-                               p.get("uncovered")))
+            with working("Searching the reports…"):
+                set_result(run(question))
         if s.ask_error:
             st.error(s.ask_error)
         if s.result is not None:
             with st.container(key="pf-card"):
                 show_result(s.result)
-        if s.editor_open:
-            editor()
     with st.container(key="pf-dock"):
         search_bar("pf-form-dock", "pf-dockbar", "pf-docksend", "Ask another question")
 
 
-def editor():
-    """Hand-written rule: runs the engine directly, no translation call."""
-    with st.container(key="pf-editor"):
-        with st.container(horizontal=True, vertical_alignment="center", key="pf-editor-top"):
-            st.markdown('<span class="pf-eyebrow">Write the rule</span>', unsafe_allow_html=True)
-            st.button("Close", type="tertiary", key="editor-close", icon=":material/close:",
-                      on_click=lambda: s.update(editor_open=False))
-        c1, c2 = st.columns([3, 2])
-        with c1:
-            # persist_state keeps the editor's values while the card is closed or another page is shown.
-            st.text_area("Rule JSON", key="rule_text", height=180, persist_state="page",
-                         help='Condition: [field, op, value]. Group: {"all": [...]}, {"any": [...]}, {"not": rule}.')
-        with c2:
-            st.radio("Answer", ["ids", "count", "breakdown"], key="answer_type", horizontal=True,
-                     persist_state="page")
-            st.selectbox("Breakdown by", ["(none)"] + list(catalog), key="by", persist_state="page")
-            st.text_input("Outside the schema (yes/no question per report, optional)", key="uncovered",
-                          placeholder="Does the report state MMR deficiency?", persist_state="page")
-        with st.expander("Field catalog"):
-            st.dataframe(pd.DataFrame([{"field": f.name, "type": f.kind, "ops": ", ".join(sorted(f.ops)),
-                                        "values": ", ".join(map(str, f.allowed or f.seen[:12])),
-                                        "description": f.description} for f in catalog.values()]),
-                         hide_index=True, width="stretch")
-        if st.button("Run this rule", type="primary", icon=":material/play_arrow:"):
-            try:
-                rule = json.loads(s.rule_text)
-            except json.JSONDecodeError as e:
-                st.error(f"Rule is not valid JSON: {e}")
-                return
-            if not isinstance(rule, (dict, list)):  # e.g. `null` would otherwise fall through to a translation call
-                st.error('Rule must be a condition [field, op, value] or a group like {"all": [...]}.')
-                return
-            by = None if s.by == "(none)" else s.by
-            ask(s.asked or "(hand-written rule)", rule=rule, answer_type=s.answer_type, by=by,
-                uncovered=s.uncovered.strip() or None)
-            st.rerun()
-
-
 def translation_note(res):
-    """Footnote with the translation's cost, and its rejected attempts if any."""
+    """Footnote with the translation's token cost."""
     t = res.translation
     if not t:
-        st.markdown('<span class="pf-note">Hand-written rule: no translation call.</span>',
-                    unsafe_allow_html=True)
         return
-    fixes = len(t.attempts) - 1
     st.markdown(f'<span class="pf-note">Translation: {t.usage["calls"]} LLM call(s), '
-                f'{t.usage["input_tokens"]:,} in / {t.usage["output_tokens"]:,} out tokens'
-                + (f", {fixes} repair(s)" if fixes else "") + "</span>", unsafe_allow_html=True)
-    rejected = t.attempts[:-1] if t.ok else t.attempts
-    if rejected:
-        with st.expander(f"{len(rejected)} rejected attempt(s)"):
-            for i, a in enumerate(rejected, 1):
-                st.markdown(f"**Attempt {i}**")
-                st.code(a["rule_json"] or "(no rule)", language="json")
-                for err in a["errors"]:
-                    st.markdown(f"- {err}")
+                f'{t.usage["input_tokens"]:,} in / {t.usage["output_tokens"]:,} out tokens</span>',
+                unsafe_allow_html=True)
 
 
 def show_result(res):
@@ -578,19 +504,14 @@ def show_result(res):
     st.markdown(
         f'<div class="pf-head"><div class="pf-read"><span class="pf-eyebrow">Read as</span>'
         f'<span class="pf-interp">{esc(res.interpretation)}</span></div>'
-        f'<div class="pf-count"><b>{count}</b><span>{unit}</span></div></div>'
-        f'<div class="pf-rule">{esc(format_rule(res.rule))}</div>', unsafe_allow_html=True)
+        f'<div class="pf-count"><b>{count}</b><span>{unit}</span></div></div>', unsafe_allow_html=True)
     with st.container(horizontal=True, key="pf-actions"):
-        st.button("Edit this rule", type="tertiary", icon=":material/edit:", on_click=load_rule_into_editor,
-                  help="Copy the rule into the editor to tweak and re-run without a translation call.")
-        with st.popover("Rule JSON", icon=":material/data_object:", type="tertiary"):
-            st.code(json.dumps(res.rule), language="json", wrap_lines=True)
         st.download_button("Download result JSON", json.dumps(to_dict(res), indent=1), type="tertiary",
                            icon=":material/download:", on_click="ignore", file_name="query_result.json", mime="application/json")
 
     if res.uncovered:
         st.markdown(f'<div class="pf-callout"><b>Outside the schema:</b> {esc(res.uncovered)}<br>'
-                    f'The rule alone (covered part) matches <b>{len(res.rule_ids)}</b> report(s).</div>',
+                    f'The rest of the question matches <b>{len(res.rule_ids)}</b> report(s).</div>',
                     unsafe_allow_html=True)
         if fb and fb.estimate:
             e = fb.estimate
@@ -613,7 +534,7 @@ def show_result(res):
                     new.translation, new.interpretation = res.translation, res.interpretation
                     set_result(new)
                 st.rerun()
-            st.markdown('<span class="pf-label">The covered part alone</span>', unsafe_allow_html=True)
+            st.markdown('<span class="pf-label">Matching the rest of the question</span>', unsafe_allow_html=True)
             pick = id_table(res.rule_ids, "rule-only")
             if pick:
                 show_report(pick, "ask")
