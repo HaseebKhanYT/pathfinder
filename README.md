@@ -36,3 +36,18 @@ echo 'OPENAI_API_KEY=sk-...' > .env              # git-ignored
 .venv/bin/python -m pathfinder.cli query "LVI-positive breast" --rule '{"all":[["organ","eq","breast"],["lymphovascular_invasion","eq","present"]]}' --answer breakdown --by pT_base   # no API calls
 .venv/bin/python -m unittest discover -s tests   # offline tests, fake LLMs
 ```
+
+## Test UI
+
+`streamlit_app.py` is a local Streamlit app for trying the query layer and checking the extractions by eye.
+
+```sh
+.venv/bin/pip install -r requirements.txt
+.venv/bin/streamlit run streamlit_app.py
+```
+
+- **Ask**: type a question and let the LLM translate it, or write the rule JSON yourself (no API calls). Shows the rule, rejected attempts, the count, a breakdown chart, and the matching reports; click a row to read the report next to its extracted record. When part of the question is outside the schema, the app shows the fallback's cost estimate and sends nothing until you click the button that names the token cost. **Edit this rule** copies a translated rule into the editor so you can re-run it without another translation call.
+- **Criteria** (train only): the 30 rules scored against `criteria_train_answers.json`, with false positives and negatives for each criterion, and each report's extracted fields compared with the gold record from `oracle.py`.
+- **Reports**: look up any saved report by id.
+
+The sidebar picks the split, the extraction model (any `outputs/extractions/<split>.<model>.jsonl`), the reasoning effort the extractions were made with, and the fallback cap.
