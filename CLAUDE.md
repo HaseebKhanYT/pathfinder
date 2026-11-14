@@ -31,6 +31,19 @@ Everything lives in `data/biobase/`. Each pack has its own README, and those REA
 
 The two halves are **unrelated**: no report matches any slide.
 
+### External: HISTAI (optional extra training data)
+
+`pack_slides/README.md` allows HistAI slides as extra training data. They are not in `data/`, and Biobase does not host them. Source: the Hugging Face collection [histai/histai-whole-slide-images-dataset](https://huggingface.co/collections/histai/histai-whole-slide-images-dataset), described in arXiv [2505.12120](https://arxiv.org/abs/2505.12120).
+
+- **Scale:** 112,801 whole-slide images in 47,279 cases. 92,536 are H&E, 16,920 IHC, and 3,345 other stains. 110,338 were scanned at 20x and 2,463 at 40x.
+- **Subsets** (slides / cases): `HISTAI-mixed` 52,691 / 21,137; `HISTAI-skin-b2` 43,757 / 20,621; `HISTAI-skin-b1` 7,710 / 1,778; `HISTAI-colorectal-b1` 5,379 / 998; `HISTAI-breast` 1,925 / 1,692; `HISTAI-thorax` 829 / 657; `HISTAI-hematologic` 214 / 214; `HISTAI-gastrointestinal` 202 / 120; `HISTAI-colorectal-b2` 94 / 62.
+- **Layout:** `histai/<dataset>/case_<case_id>/slide_[<magnification>_]<stain>_<n>.tiff`. The magnification appears in the name only when it isn't 20x.
+- **Metadata:** `histai/HISTAI-metadata` is the entry point ("read me first"), but the metadata file itself is on Google Drive because of Hugging Face storage limits. Each case has `conclusion` (the pathologist's final diagnosis), `micro_protocol`, `grossing`, `diff_diagnosis`, `additional_info`, `age`, `gender`, `icd10`, `specialization` (organ system), and `case_mapping` (path to the slides). **`diagnosis` is the incoming clinical note, not the pathologist's diagnosis.** That trap matters for anyone deriving labels.
+- **Access:** gated. You need a Hugging Face account and must accept the conditions, and HistAI says it may refuse requests. Download with `huggingface_hub.snapshot_download(repo_id="histai/<dataset>", repo_type="dataset")` or Git LFS.
+- **License:** CC BY-NC 4.0, research use only.
+
+Practical challenges: these are full-resolution WSIs (multi-GB `.tiff` files), not tiles or embeddings, so using them means downloading, tiling, and embedding ourselves. Organ names come from `specialization` and `icd10`, not from Biobase's 15 organ groups, so they would need mapping. The subsets are heavily skewed toward skin and mixed cases. Access approval may not arrive within the hackathon day.
+
 ### Embeddings
 
 | Folder | Model | Dim | Files | Note |
@@ -115,4 +128,4 @@ What makes C1 and C2 hard:
 - **Blank tiles in the 20x pack.** 461 tiles (6%) are black or empty glass and should be removed first using `blank_tiles.csv`. SUPP-04 is worst (70% blank), and `SUPP-04-bb_04_wsi_0009` has no usable 20x tile at all.
 - **Coverage gaps.** Prov-GigaPath, the strongest baseline, has slide vectors only (no tile vectors) and is missing 2 slides.
 - **Metadata leakage risk.** The manifest carries fields like `report`, `diagnosis`, `stain`, `scanner`, and `supplierId` for labelled slides, and held-out slides still carry `supplierId`, `stain`, `scanner`, `vendor`, `magnification`, `mpp`, `ageBucket`, and `sex`. Whether a shortcut through metadata is acceptable is a judgement call to raise with the user, not to assume.
-- HistAI is a separate public slide set the challenge allows as extra training data. Biobase does not host it and it is not in `data/`.
+- HISTAI (see "External: HISTAI" above) is the only allowed source of extra slide training data.
