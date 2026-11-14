@@ -244,8 +244,7 @@ def load_gold() -> dict[str, dict]:
 st.markdown(CSS, unsafe_allow_html=True)
 s = st.session_state
 for k, v in {"page": "ask", "view": "home", "asked": "", "pending": None,
-             "result": None, "result_ctx": None, "ask_error": None,
-             "max_fallback": 100}.items():
+             "result": None, "result_ctx": None, "ask_error": None}.items():
     s.setdefault(k, v)
 
 avail, _ = available()
@@ -280,6 +279,7 @@ catalog = load_catalog(split, model, effort, mtime)
 load_dotenv(REPO_ROOT / ".env")
 has_key = bool(os.environ.get("OPENAI_API_KEY"))
 gold = load_gold() if split == "train" else {}
+MAX_FALLBACK = 20  # the fallback is refused when more reports than this need an LLM call
 CTX = (split, model, effort, mtime)  # a result is only shown under the settings it was computed with
 
 
@@ -299,8 +299,6 @@ def settings_panel():
     st.selectbox("Reasoning effort", efforts, key="effort", format_func=lambda e: e or "(none)",
                  help="Only efforts that some saved extractions were made with are listed (the "
                       "fingerprint includes the effort). Also used for translation and fallback calls.")
-    st.number_input("Max fallback calls", min_value=0, max_value=5000, step=25, key="max_fallback",
-                    help="The fallback is refused if more reports than this need an LLM call.")
     st.caption(f"{len(records):,} saved {split} records ({len(rows):,} reports in {split}.jsonl)")
     if not has_key:
         st.warning("No OPENAI_API_KEY: questions cannot be answered")
@@ -400,7 +398,7 @@ def run(question, rule=None, answer_type="ids", by=None, uncovered=None, approve
         return approved is not None and est.calls <= approved.calls and est.input_tokens <= approved.input_tokens
 
     try:
-        res = run_query(question, records, texts, model, confirm, int(s.max_fallback), effort or None,
+        res = run_query(question, records, texts, model, confirm, MAX_FALLBACK, effort or None,
                         rule=rule, answer_type=answer_type, breakdown_by=by, uncovered=uncovered,
                         catalog=catalog)
     except Exception as e:  # missing key, network, rate limit: show it, keep the app alive
@@ -509,9 +507,9 @@ def show_result(res):
             e = fb.estimate
             st.warning(f"No final answer yet: checking the uncovered part needs {e.calls} LLM call(s) to "
                        f"{model}. Nothing has been sent.")
-            if e.calls > s.max_fallback:
-                st.info(f"That is above the cap of {int(s.max_fallback)}. Narrow the question, or raise "
-                        "**Max fallback calls** in Settings (top right) to get an approve button.")
+            if e.calls > MAX_FALLBACK:
+                st.info(f"That is above the cap of {MAX_FALLBACK} calls. Narrow the question to get an "
+                        "approve button.")
             elif st.button(f"Spend ~{e.input_tokens + e.output_tokens:,} tokens on {e.calls} call(s)",
                            type="primary"):
                 with working("Checking each report…"):
