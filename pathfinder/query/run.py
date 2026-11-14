@@ -110,6 +110,22 @@ def run_query(
     return res
 
 
+def to_dict(res: QueryResult) -> dict:
+    """The saved form of a result (CLI --out, UI download). No final answer -> nulls."""
+    return {
+        "question": res.question, "interpretation": res.interpretation, "rule": res.rule,
+        "uncovered": res.uncovered,
+        "answered": res.answered, "complete": res.complete,
+        "fallback_skipped": res.fallback.skipped_reason if res.fallback else None,
+        "fallback_failed": res.fallback.failed if res.fallback else [],
+        "rule_ids": res.rule_ids,
+        "count": res.count if res.answered else None,
+        "ids": res.ids if res.answered else None,
+        "breakdown": res.breakdown if res.answered else None,
+        "evidence": res.fallback.evidence if res.fallback else {},
+    }
+
+
 def format_rule(rule, indent: int = 0) -> str:
     """One condition per line, groups indented: easier to read than json indent."""
     pad = "  " * indent

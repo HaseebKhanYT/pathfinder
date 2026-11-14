@@ -131,7 +131,7 @@ def _confirm_interactive(est) -> bool:
 
 
 def cmd_query(a):
-    from .query.run import render, run_query
+    from .query.run import render, run_query, to_dict
 
     recs = _records(a.split, a.model, a.reasoning_effort)
     if not recs:
@@ -145,18 +145,7 @@ def cmd_query(a):
     print(render(res))
     if a.out and not res.error:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-        Path(a.out).write_text(json.dumps({
-            "question": res.question, "interpretation": res.interpretation, "rule": res.rule,
-            "uncovered": res.uncovered,
-            "answered": res.answered, "complete": res.complete,
-            "fallback_skipped": res.fallback.skipped_reason if res.fallback else None,
-            "fallback_failed": res.fallback.failed if res.fallback else [],
-            "rule_ids": res.rule_ids,
-            "count": res.count if res.answered else None,
-            "ids": res.ids if res.answered else None,
-            "breakdown": res.breakdown if res.answered else None,
-            "evidence": res.fallback.evidence if res.fallback else {},
-        }, indent=1))
+        Path(a.out).write_text(json.dumps(to_dict(res), indent=1))
         print(f"wrote {a.out}")
 
 
