@@ -1,22 +1,171 @@
-# pathfinder
-Finding the patients for the right research.
+# Pathfinder
+**Team ID:** T20  
+**Hackathon:** DNAForge Nov 14th Hackathon  
+**Sponsor prizes entered:** Biobase Category: $500
 
-## Report extractor (Task A)
+---
 
-`pathfinder/` turns each synthetic pathology report into a fixed JSON record with an LLM, then answers the 30 criteria with declarative rules over that record.
+## Problem
 
-- `pathfinder/extraction/schema.py`: the fixed schema. Sections: header (sex, age band, year), specimen (organ, site, laterality, procedure), shared tumor fields (histology, size as written, LVI, PNI, margins, nodes, pT/pN) and one block per organ (breast ER/PR/HER2, prostate Grade Group, kidney extent, skin group, and so on).
-- `pathfinder/extraction/prompt.py`: the field dictionary the model follows. The final diagnosis block is authoritative; the prose is used only for fields the block omits.
-- `pathfinder/extraction/postprocess.py`: flattens a record and computes derived values in code (tumor size in mm, age bounds, stage base), so the model never does arithmetic.
-- `pathfinder/criteria/criteria_rules.json`: each criterion as conditions over flat fields, for example c04 is `organ == breast`, `lymphovascular_invasion == present`, `tumor_size_mm > 20`.
-- `pathfinder/oracle.py`: builds the same record from train `labels` with no LLM, to test the rules alone and to score the extractor field by field.
+Biomedical researchers face a major challenge when it comes to finding the correct patient records and tissue samples needed for their research.
 
-Extraction uses LangChain (`ChatOpenAI.with_structured_output`, strict JSON schema) with `gpt-5.4-mini` at low reasoning effort by default. Results are cached per report in `outputs/extractions/`, tagged with a fingerprint of model, effort, prompt and schema, so changing any of them re-extracts.
+Pathology reports contain valuable information, such as cancer diagnoses, tissue types, biomarkers, and disease characteristics. However, identifying reports that satisfy all of the research criteria requires extensive manual review.
+
+At the same time, digital pathology slides have valuable visual information that is difficult to organize, search, and efficiently compare.
+
+**Our goal is to make biomedical research data easier to search, interpret, and explore using AI.**
+
+A successful solution would allow researchers to describe the clinical characteristics they are looking for in simple words, retrieve relevant pathology reports, and explore associated tissue samples through an interface.
+
+## What We Built
+
+**Pathfinder** is a web-based research platform that simplifies the discovery of pathology reports and tissue samples.
+
+Our platform combines clinical search, report retrieval, and an intuitive research dashboard.
+
+### 1. Natural-Language Patient Search
+
+Researchers can enter clinical criteria using everyday medical language.
+
+For example:
+
+"Find patients with HER2-negative breast cancer and lymph node involvement."
+
+Pathfinder is designed to identify pathology reports that satisfy the requested criteria and present the results.
+
+### 2. Pathology Report Dashboard
+
+Our dashboard is designed to help researchers:
+
+- Browse matching pathology reports.
+- View report IDs and relevant clinical information.
+- Inspect full report descriptions.
+- Identify evidence supporting a potential match.
+- Filter and explore search results.
+
+### 3. AI-Assisted Tissue Slide Exploration
+
+Pathfinder also aims to support digital pathology analysis through:
+
+- Tissue slide visualization.
+- Organ classification.
+- Similar-slide retrieval.
+- Side-by-side comparison of histopathology samples.
+
+These features support the broader goal of making biomedical data searchable.
+
+## Run or View the Demo
+
+**Live demo:** Not deployed yet  
+**GitHub repository:** https://github.com/HaseebKhanYT/pathfinder  
+**Demo video:** Not recorded yet
+
+### Running Locally
+
+Prerequisites:
+
+- Python 3.11+ (stdlib HTTP server; no Node.js required for the website)
+- Optional: `streamlit>=1.39.0` for the earlier Streamlit prototype UI (`requirements.txt`)
+- Biobase challenge data under `data/biobase/` when available (git-ignored; not redistributed in this repo)
 
 ```sh
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-echo 'OPENAI_API_KEY=sk-...' > .env              # git-ignored
-.venv/bin/python -m pathfinder.cli extract --split train --limit 210   # organ-stratified sample
-.venv/bin/python -m pathfinder.cli evaluate      # criteria P/R/F1 and field accuracy vs train labels
-.venv/bin/python -m pathfinder.cli submit        # extract test.jsonl, write outputs/submission.json
+# Website (stdlib HTTP server on http://127.0.0.1:8000)
+python3 -m server.main
+
+# Optional Streamlit prototype
+pip install -r requirements.txt
+streamlit run app.py
 ```
+
+### Demo Walkthrough
+
+1. Open Pathfinder.
+2. Enter a clinical search query.
+3. Submit the query using the search button.
+4. Review the returned pathology reports.
+5. Select a report to inspect its details.
+
+## Evidence and Limitations
+
+### Dataset
+
+The Biobase challenge provides:
+
+| Dataset | Description |
+|---|---|
+| Synthetic reports | 9,010 labeled reports |
+| Test reports | 979 reports |
+| Search criteria | 30 clinical criteria |
+| Pathology slides | 263 slides |
+| Held-out slides | 67 slides |
+| Slide tiles | 12,276 tiles with embeddings |
+| High-resolution tiles | 7,354 tiles at approximately 20× magnification |
+
+### Evaluation Approach
+
+We aim to evaluate Pathfinder using the provided challenge datasets.
+
+**Clinical report retrieval:** Compare the reports selected by our system against the provided labels or baseline, using appropriate measures such as precision, recall, and F1 score.
+
+**Organ classification:** Evaluate whether predicted tissue organ groups match known slide labels.
+
+**Similar-slide retrieval:** Assess whether retrieved slides share relevant known characteristics with the query slide.
+
+### Results
+
+Quantitative challenge scoring is not complete yet. We will report only experiments that have actually been completed.
+
+- **Report retrieval performance:** Pending (baseline keyword mean F1 ≈ 0.27 on 23 of 30 criteria)
+- **Organ classification accuracy:** Pending (Prov-GigaPath baseline ≈ 70%)
+- **Similar-slide retrieval performance:** Pending (Prov-GigaPath baseline P@1 / P@5 / P@10 ≈ 0.8 / 0.7 / 0.6)
+- **Baseline comparison:** Pending against the Biobase keyword and slide-vector baselines
+- **Evaluation artifacts:** Not published yet
+
+### Limitations
+
+Pathfinder is a research prototype, not a validated clinical decision-support system.
+
+Current limitations may include:
+
+- Synthetic reports may not reflect the complexity of real clinical documentation.
+- Model predictions may contain incorrect matches or classifications.
+- Similarity between tissue images does not guarantee clinical or diagnostic equivalence.
+- Available pathology information may not be sufficient to establish actual clinical-trial eligibility.
+- Additional validation would be required before applying the system to real patient data.
+
+## Data and Permissions
+
+Pathfinder uses datasets provided through the Biobase DNAForge hackathon.
+
+Data sources include:
+
+- Biobase synthetic pathology reports.
+- Biobase tissue slide metadata.
+- Biobase pathology thumbnails and tiles.
+- Provided image embeddings.
+- HistAI public pathology data, if used.
+
+**Dataset access:**
+
+- Biobase challenge packs (reports, slides, tiles, embeddings): provided through the DNAForge × Biobase hackathon materials (local `data/biobase/`; not committed to this repository).
+- HistAI whole-slide images (optional extra training): [histai/histai-whole-slide-images-dataset](https://huggingface.co/collections/histai/histai-whole-slide-images-dataset) (CC BY-NC 4.0; gated access on Hugging Face).
+
+Dataset permissions and reuse restrictions must be verified against the terms of each source.
+
+We do not assume that hackathon data may be redistributed publicly. Restricted data should be accessed through the approved provider links rather than copied into the repository.
+
+Any API credentials or private configuration values must remain outside version control.
+
+## Next Step
+
+Our next priority is to validate Pathfinder's retrieval performance quantitatively against the provided baseline.
+
+We would run the system on held-out reports, compare predicted matches against the challenge's evaluation labels, and analyze false positives and false negatives.
+
+This experiment would help determine whether Pathfinder can reliably identify relevant pathology reports and which types of clinical criteria require improvement.
+
+---
+
+**Pathfinder: Finding the patients for the right research.**
+
+Built for the DNAForge × Biobase Hackathon, November 2026.
