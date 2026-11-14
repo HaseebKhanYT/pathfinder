@@ -248,7 +248,7 @@ for k, v in {"page": "ask", "view": "home", "asked": "", "pending": None,
              "max_fallback": 100}.items():
     s.setdefault(k, v)
 
-avail, unusable = available()
+avail, _ = available()
 if not avail:
     st.error("No usable saved extractions in outputs/extractions/. Run "
              "`.venv/bin/python -m pathfinder.cli extract --split train --limit 210` first.")
@@ -302,11 +302,8 @@ def settings_panel():
     st.number_input("Max fallback calls", min_value=0, max_value=5000, step=25, key="max_fallback",
                     help="The fallback is refused if more reports than this need an LLM call.")
     st.caption(f"{len(records):,} saved {split} records ({len(rows):,} reports in {split}.jsonl)")
-    if unusable:
-        st.caption("Not listed (no rows match the current prompt and schema; re-run extract): "
-                   + ", ".join(unusable))
-    (st.success if has_key else st.warning)(
-        "OPENAI_API_KEY found" if has_key else "No OPENAI_API_KEY: questions cannot be answered")
+    if not has_key:
+        st.warning("No OPENAI_API_KEY: questions cannot be answered")
 
 
 def header():
