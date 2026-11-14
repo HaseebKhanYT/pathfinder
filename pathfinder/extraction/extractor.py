@@ -26,8 +26,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = "gpt-5.4-mini"
 
 
-def build_chain(model: str = DEFAULT_MODEL, reasoning_effort: str | None = "low"):
-    """Return a runnable that maps a message list to a `ReportExtraction`."""
+def build_chat_model(model: str = DEFAULT_MODEL, reasoning_effort: str | None = "low") -> ChatOpenAI:
+    """A ChatOpenAI client with the repo's .env key and model-appropriate settings."""
     load_dotenv(REPO_ROOT / ".env")
     if not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY missing: put it in .env at the repo root")
@@ -38,8 +38,14 @@ def build_chain(model: str = DEFAULT_MODEL, reasoning_effort: str | None = "low"
             kwargs["reasoning_effort"] = reasoning_effort
     else:
         kwargs["temperature"] = 0
-    llm = ChatOpenAI(**kwargs)
-    return llm.with_structured_output(ReportExtraction, method="json_schema", strict=True, include_raw=True)
+    return ChatOpenAI(**kwargs)
+
+
+def build_chain(model: str = DEFAULT_MODEL, reasoning_effort: str | None = "low"):
+    """Return a runnable that maps a message list to a `ReportExtraction`."""
+    return build_chat_model(model, reasoning_effort).with_structured_output(
+        ReportExtraction, method="json_schema", strict=True, include_raw=True
+    )
 
 
 def fingerprint(model: str, reasoning_effort: str | None) -> str:
