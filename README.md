@@ -1,4 +1,5 @@
 # Pathfinder
+
 **Team ID:** T20  
 **Hackathon:** DNAForge Nov 14th Hackathon  
 **Sponsor prizes entered:** Biobase Category: $500
@@ -111,16 +112,6 @@ We aim to evaluate Pathfinder using the provided challenge datasets.
 
 **Similar-slide retrieval:** Assess whether retrieved slides share relevant known characteristics with the query slide.
 
-### Results
-
-Quantitative challenge scoring is not complete yet. We will report only experiments that have actually been completed.
-
-- **Report retrieval performance:** Pending (baseline keyword mean F1 ≈ 0.27 on 23 of 30 criteria)
-- **Organ classification accuracy:** Pending (Prov-GigaPath baseline ≈ 70%)
-- **Similar-slide retrieval performance:** Pending (Prov-GigaPath baseline P@1 / P@5 / P@10 ≈ 0.8 / 0.7 / 0.6)
-- **Baseline comparison:** Pending against the Biobase keyword and slide-vector baselines
-- **Evaluation artifacts:** Not published yet
-
 ### Limitations
 
 Pathfinder is a research prototype, not a validated clinical decision-support system.
@@ -143,18 +134,6 @@ Data sources include:
 - Biobase tissue slide metadata.
 - Biobase pathology thumbnails and tiles.
 - Provided image embeddings.
-- HistAI public pathology data, if used.
-
-**Dataset access:**
-
-- Biobase challenge packs (reports, slides, tiles, embeddings): provided through the DNAForge × Biobase hackathon materials (local `data/biobase/`; not committed to this repository).
-- HistAI whole-slide images (optional extra training): [histai/histai-whole-slide-images-dataset](https://huggingface.co/collections/histai/histai-whole-slide-images-dataset) (CC BY-NC 4.0; gated access on Hugging Face).
-
-Dataset permissions and reuse restrictions must be verified against the terms of each source.
-
-We do not assume that hackathon data may be redistributed publicly. Restricted data should be accessed through the approved provider links rather than copied into the repository.
-
-Any API credentials or private configuration values must remain outside version control.
 
 ## Next Step
 
