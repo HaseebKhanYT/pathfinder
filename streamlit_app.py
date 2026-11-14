@@ -94,6 +94,8 @@ a { color: #3C7A6E; } a:hover { color: #2A5C52; }
 .st-key-pf-right button:hover { color: #1E3A35; background: #E3ECE8; }
 .st-key-pf-right [data-testid="stPopover"] button { border: 0; background: none; }
 .st-key-pf-right [data-testid="stPopover"] button:hover { background: #E3ECE8; }
+/* Settings is an icon-only button: hide the popover's expand chevron. */
+.st-key-pf-right [data-testid="stPopoverButton"] > div > div[aria-hidden="true"] { display: none; }
 
 /* ---- home ---- */
 .st-key-pf-home { align-items: center; gap: 56px; padding: 48px 0 64px; }
@@ -256,8 +258,8 @@ if not avail:
 def _keep(key: str, options: list, preferred) -> None:
     """Point a settings widget's state at a valid option before the widget is drawn.
 
-    The settings live in a popover that is drawn after the header label that
-    describes them, so the choices are resolved here first from session state.
+    The settings live in a popover drawn late in the page, while the data they
+    select is loaded first, so the choices are resolved here from session state.
     """
     if s.get(key) not in options:
         s[key] = preferred if preferred in options else options[0]
@@ -317,8 +319,7 @@ def header():
         with st.container(horizontal=True, key="pf-right", width="content"):
             for page, label in (("ask", "Ask"), ("criteria", "Criteria"), ("reports", "Reports")):
                 st.button(label, type="tertiary", on_click=go, args=(page,), key=f"nav-{page}")
-            with st.popover(f"{split} · {model} · {len(records):,} reports", icon=":material/tune:",
-                            help="Settings"):
+            with st.popover("", icon=":material/tune:", help="Settings", key="pf-settings"):
                 settings_panel()
 
 
@@ -481,20 +482,9 @@ def thread():
         search_bar("pf-form-dock", "pf-dockbar", "pf-docksend", "Ask another question")
 
 
-def translation_note(res):
-    """Footnote with the translation's token cost."""
-    t = res.translation
-    if not t:
-        return
-    st.markdown(f'<span class="pf-note">Translation: {t.usage["calls"]} LLM call(s), '
-                f'{t.usage["input_tokens"]:,} in / {t.usage["output_tokens"]:,} out tokens</span>',
-                unsafe_allow_html=True)
-
-
 def show_result(res):
     if res.error:
         st.error(res.error)
-        translation_note(res)
         return
 
     fb = res.fallback
@@ -538,13 +528,7 @@ def show_result(res):
             pick = id_table(res.rule_ids, "rule-only")
             if pick:
                 show_report(pick, "ask")
-            translation_note(res)
             return
-        if fb:
-            st.markdown(f'<span class="pf-note">Fallback used {fb.usage["calls"]} call(s), '
-                        f'{fb.usage["input_tokens"]:,} in / {fb.usage["output_tokens"]:,} out tokens. '
-                        f'yes={len(fb.matched)} no={len(fb.rejected)} unverified-quote={len(fb.unverified)} '
-                        f'failed={len(fb.failed)}</span>', unsafe_allow_html=True)
 
     if not res.complete:
         st.warning(f"Lower bound: {len(fb.failed)} report(s) could not be checked.")
@@ -571,7 +555,6 @@ def show_result(res):
             pick_u = id_table(fb.unverified, "unverified-ids", {"evidence": fb.evidence})
         if pick_u:
             show_report(pick_u, "unverified")
-    translation_note(res)
 
 
 # ---------- page: criteria ----------
