@@ -1,7 +1,7 @@
 """Fixed JSON schema for one pathology report.
 
-The LLM fills `ReportExtraction` through OpenAI strict structured output, so
-every field is always present; a field that does not apply to the report's
+The LLM fills `ReportExtraction` through strict structured output (Nebius's
+OpenAI-compatible API), so every field is always present; a field that does not apply to the report's
 organ is `null` (or `"not_reported"` for status enums). Fields are grouped by
 the report section they come from: the header line, the SPECIMEN line, and the
 FINAL DIAGNOSIS block.

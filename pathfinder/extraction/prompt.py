@@ -1,6 +1,6 @@
 """System prompt: the field dictionary the extractor follows.
 
-The prompt is static (no per-report text), so OpenAI's automatic prompt
+The prompt is static (no per-report text), so the provider's automatic prompt
 caching reuses it across all ~10k calls. Keep it that way: put anything
 report-specific in the human message only.
 """

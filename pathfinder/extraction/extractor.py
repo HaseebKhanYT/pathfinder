@@ -1,7 +1,8 @@
 """LangChain-based extractor: report text -> `ReportExtraction` JSON.
 
 Uses `ChatOpenAI.with_structured_output(..., method="json_schema", strict=True)`
-so OpenAI constrains decoding to the schema; malformed JSON cannot come back.
+against Nebius Token Factory's OpenAI-compatible endpoint, which constrains
+decoding to the schema; malformed JSON cannot come back.
 Results are appended to a JSONL cache keyed by report id, so an interrupted
 run resumes where it stopped and re-runs never pay twice for a report.
 """
@@ -23,17 +24,30 @@ from .prompt import HUMAN_TEMPLATE, SYSTEM_PROMPT
 from .schema import ReportExtraction
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MODEL = "gpt-5.4-mini"
+NEBIUS_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
+# Nebius serves no ChatGPT models. GLM-5.3-Flash is a mini-tier reasoning model that matched
+# gpt-5.4-mini's field accuracy on a 300-report train sample (0.9985 vs 0.9993), at ~$0.86/1k reports.
+DEFAULT_MODEL = "zai-org/GLM-5.3-Flash"
+
+
+def model_slug(model: str) -> str:
+    """Filename-safe form of a model id: Nebius ids contain "/" (`zai-org/GLM-5.3-Flash`)."""
+    return model.replace("/", "__")
+
+
+def model_from_slug(slug: str) -> str:
+    return slug.replace("__", "/")
 
 
 def build_chat_model(model: str = DEFAULT_MODEL, reasoning_effort: str | None = "low") -> ChatOpenAI:
-    """A ChatOpenAI client with the repo's .env key and model-appropriate settings."""
+    """A ChatOpenAI client pointed at Nebius, with the repo's .env key and model-appropriate settings."""
     load_dotenv(REPO_ROOT / ".env")
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY missing: put it in .env at the repo root")
-    kwargs = dict(model=model, max_retries=6, timeout=120)
-    # Reasoning models (gpt-5*, o*) take reasoning_effort, not temperature.
-    if model.startswith(("gpt-5", "o")):
+    api_key = os.environ.get("NEBIUS_API_KEY")
+    if not api_key:
+        raise RuntimeError("NEBIUS_API_KEY missing: put it in .env at the repo root")
+    kwargs = dict(model=model, api_key=api_key, base_url=NEBIUS_BASE_URL, max_retries=6, timeout=120)
+    # Reasoning models (gpt-oss, gpt-5*, o*) take reasoning_effort, not temperature.
+    if model.removeprefix("openai/").startswith(("gpt-oss", "gpt-5", "o")):
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
     else:
