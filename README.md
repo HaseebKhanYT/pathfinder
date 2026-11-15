@@ -1,57 +1,57 @@
-# pathfinder
-Finding the patients for the right research.
+# Pathfinder
 
-## Report extractor (Task A)
+**Team ID:** T20  
+**Hackathon:** DNAForge Nov 14th Hackathon  
+**Sponsor prizes entered:** Biobase Category: $500
 
-`pathfinder/` turns each synthetic pathology report into a fixed JSON record with an LLM, then answers the 30 criteria with declarative rules over that record.
+---
 
-- `pathfinder/extraction/schema.py`: the fixed schema. Sections: header (sex, age band, year), specimen (organ, site, laterality, procedure), shared tumor fields (histology, size as written, LVI, PNI, margins, nodes, pT/pN) and one block per organ (breast ER/PR/HER2, prostate Grade Group, kidney extent, skin group, and so on).
-- `pathfinder/extraction/prompt.py`: the field dictionary the model follows. The final diagnosis block is authoritative; the prose is used only for fields the block omits.
-- `pathfinder/extraction/postprocess.py`: flattens a record and computes derived values in code (tumor size in mm, age bounds, stage base), so the model never does arithmetic.
-- `pathfinder/criteria/criteria_rules.json`: each criterion as conditions over flat fields, for example c04 is `organ == breast`, `lymphovascular_invasion == present`, `tumor_size_mm > 20`.
-- `pathfinder/oracle.py`: builds the same record from train `labels` with no LLM, to test the rules alone and to score the extractor field by field.
+## Problem
 
-Extraction uses LangChain (`ChatOpenAI.with_structured_output`, strict JSON schema) against [Nebius Token Factory](https://tokenfactory.nebius.com/)'s OpenAI-compatible API, with `zai-org/GLM-5.3-Flash` by default. Nebius hosts no ChatGPT models; GLM-5.3-Flash is a small reasoning model that matched `gpt-5.4-mini`'s field accuracy on a 300-report train sample, where `openai/gpt-oss-120b` (Nebius's only OpenAI model) left more fields empty. Results are cached per report in `outputs/extractions/`, tagged with a fingerprint of model, effort, prompt and schema, so changing any of them re-extracts.
+Biomedical researchers face challenges when it comes to finding correct patient records and samples they need for research. Identifying reports that satisfy all of the criteria requires extensive analysis.
+
+Our goal is to make biomedical research data easier to search and interpret. Researchers should describe the characteristics they are looking for in simple words and then be given reports that match their queries.
+
+## What We Built
+
+Pathfinder extracts structured clinical fields from pathology reports with an LLM extractor (gpt-5.4-mini, fixed JSON schema), then matches research criteria with declarative rules.
+On the Biobase train set (9,010 reports), this reached mean F1 **1.00** across all 30 criteria, versus the keyword baseline of ~0.27, with field accuracy at or near 1.0 on most fields.
+
+A query layer answers new plain-English questions: an LLM turns each question into a validated rule that runs over the saved extractions, and any part the schema can't express is checked report by report with a quoted line of evidence.
+
+We built a web application where anyone can upload their files and use our extractor tool to research and find their patients and clinical trials, without being restricted to a Biobase dataset.
+
+## Run or View the Demo
+
+Biobase packs go under `data/` (git-ignored, not shipped in the repo).
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-echo 'NEBIUS_API_KEY=...' > .env                # git-ignored
+echo 'OPENAI_API_KEY=sk-...' > .env                                    # git-ignored
 .venv/bin/python -m pathfinder.cli extract --split train --limit 210   # organ-stratified sample
-.venv/bin/python -m pathfinder.cli evaluate      # criteria P/R/F1 and field accuracy vs train labels
-.venv/bin/python -m pathfinder.cli submit        # extract test.jsonl, write outputs/submission.json
-```
-
-## Query layer
-
-`pathfinder/query/` answers new cohort questions over the saved extractions. Reports are extracted once; each question becomes a rule.
-
-1. **Translate** (`translate.py`): the LLM gets the question, the field catalog with allowed values (`catalog.py`, read from the schema), and the 30 criteria rules as worked examples, and writes a rule in the engine's JSON format.
-2. **Validate** (`validate.py`): unknown fields, values that aren't allowed or never occur, and ops that don't fit a field's type are rejected; the errors go back to the LLM to fix (up to 3 repairs).
-3. **Run** (`run.py`): the engine runs the rule over the saved records and returns ids, a count, or a breakdown. No API calls.
-4. **Fall back** (`fallback.py`): if part of the question is outside the schema (for example MMR status), the rule covers what it can and each remaining report gets a yes/no LLM check with a verbatim quote. A yes counts only if the quote (3+ words) is found in the report. This step shows a token estimate and asks first, refuses above `--max-fallback` (default 100), never spends from a non-terminal without `--yes`, and caches verdicts.
-5. **Show**: the rule is printed with every answer, plus a `--rule ... --uncovered ...` line that re-runs the same query with no translation call.
-
-```sh
+.venv/bin/python -m pathfinder.cli evaluate                            # P/R/F1 and field accuracy vs train labels
 .venv/bin/python -m pathfinder.cli query "Kidney cancers larger than 7 cm, broken down by extent of invasion"
-.venv/bin/python -m pathfinder.cli query "LVI-positive breast" --rule '{"all":[["organ","eq","breast"],["lymphovascular_invasion","eq","present"]]}' --answer breakdown --by pT_base   # no API calls
-.venv/bin/python -m unittest discover -s tests   # offline tests, fake LLMs
+.venv/bin/python -m pathfinder.cli submit                              # write outputs/submission.json for Task A
+.venv/bin/streamlit run streamlit_app.py                               # web UI
+.venv/bin/python -m unittest discover -s tests                         # offline tests
 ```
 
-## Test UI
+The web UI has three pages: **Find** (ask a question, see the count, breakdown and matching reports, and open any report next to its key findings), **Criteria** (the 30 rules scored on train), and **Reports** (look up a report by id). It needs a network connection for its fonts and images, and it asks before any per-report LLM check that costs tokens.
 
-`streamlit_app.py` is a local Streamlit app for trying the query layer and checking the extractions by eye.
+## Evidence and Limitations
 
-```sh
-.venv/bin/pip install -r requirements.txt
-.venv/bin/streamlit run streamlit_app.py
-```
+On train, the extractor-plus-rules pipeline scored mean F1 **1.00** on all 30 criteria (9,010 reports); a leave-one-out query-layer check hit mean F1 **0.9999** (29/30 exact). Field accuracy was 1.0 on 23 of 31 fields (lowest pN ≈ 0.985).
 
-- **Find** (home): type a question and press Enter, or pick an example chip. The LLM translates it into a rule behind the scenes, and the answer card shows how the question was read, the count, a breakdown chart, and the matching reports. The rule itself is not shown; use `cli query` to see it or to run a hand-written rule. Click any cell of a row to open that report (the page scrolls to it) and read it next to its key findings: the diagnosis, stage, size, grade and positive nodes, the organ's biomarkers (ER, PR, HER2, Gleason, ISUP and so on), and invasion and margins, with adverse findings highlighted. When part of the question is outside the schema, the card shows the fallback's cost estimate and sends nothing until you click the button that names the token cost.
-- **Criteria** (train only): the 30 rules scored against `criteria_train_answers.json`, with false positives and negatives for each criterion, and, under each report's key findings, an expander comparing its extracted fields with the gold record from `oracle.py`.
-- **Reports**: look up any saved report by id and see its key findings.
+## Data and Permissions
 
-The app reads the `zai-org/GLM-5.3-Flash` extractions made at `low` effort, or the older OpenAI `gpt-5.4-mini` ones when a split has none (`MODEL` and `EFFORT` in `streamlit_app.py`; failing both, the first available file). Translation and fallback calls always go to Nebius with `MODEL` at `EFFORT`, whichever file is read. It refuses a fallback that needs more than 20 LLM calls (`MAX_FALLBACK` in `streamlit_app.py`); narrow the question instead.
+Pathfinder uses datasets provided through Biobase and DNAForge, which includes Biobase synthetic pathology reports, Biobase tissue slide metadata, Biobase pathology thumbnails and tiles, and provided image embeddings.
 
-Click the **pathfinder** logo to return to the empty home view. The settings popover, behind the icon at the top right, picks the split and warns when `NEBIUS_API_KEY` is missing.
+## Next Step
 
-The look follows the "Pathfinder Redesign" file in Claude Design. Colors and fonts are in `.streamlit/config.toml`; the hero, search bar, and answer card are styled by the CSS at the top of `streamlit_app.py`. The fonts load from Google Fonts and the home-page photos are hotlinked from Wikimedia Commons, with credits shown on hover, so the app needs a network connection to look right.
+Our next step includes to put our web-based site into an uniformed application, expanding its capabilities and becoming the main assistant for researchers in medicine.
+
+---
+
+**Pathfinder: Finding the patients for the right research.**
+
+Built for the DNAForge × Biobase Hackathon, November 2026.

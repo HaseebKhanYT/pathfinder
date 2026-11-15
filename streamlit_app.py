@@ -3,6 +3,9 @@
     .venv/bin/streamlit run streamlit_app.py
 
 Reads the saved extractions in outputs/extractions/ (run `cli extract` first).
+Settings > Upload a dataset takes a JSONL of reports shaped like test.jsonl,
+saves it to outputs/datasets/, extracts it after a click that names the cost,
+and switches the search to it.
 Scoring the criteria and browsing reports make no API calls. Answering a
 question makes 1 to 4 translation calls; the rule is never shown to the user. The per-report fallback runs
 only after you click the button that shows its cost estimate, and only if the
@@ -23,15 +26,18 @@ import os
 import re
 from collections import Counter
 from contextlib import contextmanager
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
 from pathfinder.cli import DATA, FIELDS, OUT, _records, cache_path, load_split
+from pathfinder.datasets import dataset_name, parse_reports, save_dataset, split_path
 from pathfinder.criteria.engine import load_rules, match_all
 from pathfinder.evaluate import _eq, score_criteria
-from pathfinder.extraction.extractor import DEFAULT_MODEL, REPO_ROOT, fingerprint, model_from_slug
+from pathfinder.extraction.extractor import (DEFAULT_MODEL, REPO_ROOT, extract_reports, fingerprint, load_cache,
+                                             model_from_slug)
 from pathfinder.extraction.postprocess import derive
 from pathfinder.oracle import gold_extraction
 from pathfinder.query.catalog import build_catalog
@@ -264,23 +270,37 @@ def available() -> tuple[dict[str, dict[str, dict[str, int]]], list[str]]:
 
 
 @st.cache_data(show_spinner="Loading saved extractions...")
-def load_records(split: str, model: str, effort: str, mtime: float) -> dict[str, dict]:
-    return _records(split, model, effort or None)
+def load_records(split: str, model: str, effort: str, mtime: float, rows_mtime: float) -> dict[str, dict]:
+    # Only ids still in the dataset: re-uploading a dataset under the same name with other
+    # reports leaves the old ids in its extraction file, and they have no text to show.
+    rows = load_rows(split, rows_mtime)
+    return {i: r for i, r in _records(split, model, effort or None).items() if i in rows}
 
 
 @st.cache_data(show_spinner="Loading report text...")
-def load_rows(split: str) -> dict[str, dict]:
+def load_rows(split: str, rows_mtime: float) -> dict[str, dict]:
     return {r["id"]: r for r in load_split(split)}
 
 
 @st.cache_resource(show_spinner="Building field catalog...")
-def load_catalog(split: str, model: str, effort: str, mtime: float):
-    return build_catalog(load_records(split, model, effort, mtime))
+def load_catalog(split: str, model: str, effort: str, mtime: float, rows_mtime: float):
+    return build_catalog(load_records(split, model, effort, mtime, rows_mtime))
 
 
 @st.cache_data(show_spinner="Building gold records from train labels...")
 def load_gold() -> dict[str, dict]:
-    return {i: derive(gold_extraction(r["labels"])) for i, r in load_rows("train").items()}
+    return {i: derive(gold_extraction(r["labels"]))
+            for i, r in load_rows("train", split_path("train").stat().st_mtime).items()}
+
+
+@st.cache_data(show_spinner=False)
+def avg_usage(path: str, fp: str, mtime: float) -> tuple[float, float] | None:
+    """Mean (input, output) tokens per report in one extraction file, for the upload estimate."""
+    use = [r["usage"] for r in load_cache(Path(path)).values()
+           if r.get("fingerprint") == fp and (r.get("usage") or {}).get("input_tokens")]
+    if not use:
+        return None
+    return (sum(u["input_tokens"] for u in use) / len(use), sum(u.get("output_tokens") or 0 for u in use) / len(use))
 
 
 # ---------- settings and app state ----------
@@ -309,6 +329,10 @@ def _keep(key: str, options: list, preferred) -> None:
 
 
 splits = sorted(avail)
+# A finished upload asks to switch to its dataset; this must happen before the split
+# selectbox is drawn, since Streamlit refuses to set a drawn widget's key.
+if s.get("switch_split") in avail:
+    s.split = s.pop("switch_split")
 _keep("split", splits, "train")
 split = s.split
 # The model and effort are fixed: the preferred ones when this split has extractions for them,
@@ -319,15 +343,16 @@ MODEL, EFFORT = DEFAULT_MODEL, "low"
 model = next((m for m in (MODEL, "gpt-5.4-mini") if m in avail[split]), sorted(avail[split])[0])
 effort = EFFORT if EFFORT in avail[split][model] else next(iter(avail[split][model]))
 mtime = cache_path(split, model).stat().st_mtime
-records = load_records(split, model, effort, mtime)
-rows = load_rows(split)
-texts = {i: rows[i]["report_text"] for i in records if i in rows}
-catalog = load_catalog(split, model, effort, mtime)
+rows_mtime = split_path(split).stat().st_mtime
+records = load_records(split, model, effort, mtime, rows_mtime)
+rows = load_rows(split, rows_mtime)
+texts = {i: rows[i]["report_text"] for i in records}
+catalog = load_catalog(split, model, effort, mtime, rows_mtime)
 load_dotenv(REPO_ROOT / ".env")
 has_key = bool(os.environ.get("NEBIUS_API_KEY"))
 gold = load_gold() if split == "train" else {}
 MAX_FALLBACK = 20  # the fallback is refused when more reports than this need an LLM call
-CTX = (split, model, effort, mtime)  # a result is only shown under the settings it was computed with
+CTX = (split, model, effort, mtime, rows_mtime)  # a result is only shown under the settings it was computed with
 
 
 def reset():
@@ -345,6 +370,68 @@ def settings_panel():
     st.caption(f"{len(records):,} saved {split} records ({len(rows):,} reports in {split}.jsonl)")
     if not has_key:
         st.warning("No NEBIUS_API_KEY: questions cannot be answered")
+    if st.button("Upload a dataset", icon=":material/upload_file:", key="pf-upload-open", width="stretch"):
+        upload_dialog()
+
+
+@st.dialog("Upload a dataset")
+def upload_dialog():
+    """Upload a JSONL of reports, extract the ones not yet extracted, and switch the search to it.
+
+    Nothing is sent to Nebius until the button that names the number of calls is clicked.
+    """
+    st.markdown('<span class="pf-note">A <b>.jsonl</b> file with one report per line, shaped like '
+                '<code>test.jsonl</code>: <code>{"id": "...", "report_text": "..."}</code>. Upload '
+                '<code>test.jsonl</code> itself to search the test set.</span>', unsafe_allow_html=True)
+    f = st.file_uploader("Reports", type=["jsonl"], label_visibility="collapsed", key="pf-upload-file")
+    if f is None:
+        return
+    try:
+        new_rows = parse_reports(f.getvalue())
+    except ValueError as e:
+        st.error(f"Can't read {f.name}: {e}")
+        return
+    name = dataset_name(f.name, new_rows)
+    path = cache_path(name, MODEL)
+    fp = fingerprint(MODEL, EFFORT)
+    done = {i for i, r in load_cache(path).items() if "extraction" in r and r.get("fingerprint") == fp}
+    todo = [r for r in new_rows if r["id"] not in done]
+    st.markdown(f"**{len(new_rows):,}** reports, to be saved as the dataset **{esc(name)}**. "
+                f"{len(new_rows) - len(todo):,} already extracted, **{len(todo):,}** to extract with `{MODEL}`.")
+    ref = cache_path("train", MODEL)
+    avg = avg_usage(str(ref), fp, ref.stat().st_mtime) if todo and ref.exists() else None
+    if avg:
+        st.caption(f"About {avg[0] * len(todo):,.0f} input and {avg[1] * len(todo):,.0f} output tokens, "
+                   f"from the average of the saved train extractions.")
+    if todo and not has_key:
+        st.warning("No NEBIUS_API_KEY in .env, so these reports can't be extracted.")
+        return
+    label = f"Extract {len(todo):,} report(s) and search them" if todo else "Search this dataset"
+    if not st.button(label, type="primary", key="pf-upload-go"):
+        return
+    save_dataset(name, new_rows)
+    n_err = 0
+    if todo:
+        bar = st.progress(0.0, text=f"Extracting 0 / {len(todo):,}")
+
+        def progress(n, total, errors):
+            bar.progress(n / total, text=f"Extracting {n:,} / {total:,}" + (f" ({errors} failed)" if errors else ""))
+
+        try:
+            got = extract_reports(new_rows, path, MODEL, EFFORT, concurrency=16, on_progress=progress)
+        except Exception as e:  # missing key, network: report it, keep the dialog open
+            st.error(f"{type(e).__name__}: {e}")
+            return
+        n_err = len(new_rows) - len(got)
+        if not got:
+            st.error("No report could be extracted. Check the API key and try again; the failures are logged "
+                     f"in {path.relative_to(REPO_ROOT)}.")
+            return
+    s.switch_split = name
+    s.upload_note = (f"Searching {name}: {len(new_rows) - n_err:,} report(s) ready"
+                     + (f", {n_err} failed to extract (upload the file again to retry them)" if n_err else ""))
+    reset()
+    st.rerun()
 
 
 def header():
@@ -827,6 +914,8 @@ def page_reports():
 
 
 header()
+if s.get("upload_note"):
+    st.toast(s.pop("upload_note"), icon=":material/check_circle:")
 if s.page == "criteria":
     with st.container(key="pf-page"):
         page_criteria()

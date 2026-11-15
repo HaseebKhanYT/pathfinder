@@ -18,6 +18,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .criteria.engine import match_all
+from .datasets import split_path
 from .evaluate import field_accuracy, score_criteria
 from .extraction.extractor import DEFAULT_MODEL, REPO_ROOT, extract_reports, fingerprint, load_cache, model_slug
 from .extraction.postprocess import derive
@@ -40,7 +41,8 @@ FIELDS = [
 
 
 def load_split(split: str) -> list[dict]:
-    return [json.loads(l) for l in (DATA / f"{split}.jsonl").read_text().splitlines() if l.strip()]
+    """Rows of a built-in split (train, test) or of a dataset uploaded in the app."""
+    return [json.loads(l) for l in split_path(split).read_text().splitlines() if l.strip()]
 
 
 def stratified(rows: list[dict], n: int, seed: int = 7) -> list[dict]:
