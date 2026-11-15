@@ -542,6 +542,8 @@ def show_report(rid: str, key: str, compare: bool = False, scroll: bool = True):
         st.code(texts.get(rid, ""), language="text", wrap_lines=True, height="stretch")
     with right:
         rec = records[rid]
+        # Same heading as the left column, outside the box, so both boxes start on one line.
+        st.markdown('<span class="pf-eyebrow">Key findings</span>', unsafe_allow_html=True)
         st.markdown(findings_panel(rec), unsafe_allow_html=True)
         if compare and rid in gold:
             g = gold[rid]
