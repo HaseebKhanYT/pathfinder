@@ -309,7 +309,7 @@ def header():
         with st.container(key="pf-logo", width="content"):
             st.button("pathfinder", on_click=reset, help="Back to start")
         with st.container(horizontal=True, key="pf-right", width="content"):
-            for page, label in (("ask", "Ask"), ("criteria", "Criteria"), ("reports", "Reports")):
+            for page, label in (("ask", "Find"), ("criteria", "Criteria"), ("reports", "Reports")):
                 st.button(label, type="tertiary", on_click=go, args=(page,), key=f"nav-{page}")
             with st.popover("", icon=":material/tune:", help="Settings", key="pf-settings"):
                 settings_panel()

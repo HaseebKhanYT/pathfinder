@@ -46,7 +46,7 @@ echo 'OPENAI_API_KEY=sk-...' > .env              # git-ignored
 .venv/bin/streamlit run streamlit_app.py
 ```
 
-- **Ask** (home): type a question and press Enter, or pick an example chip. The LLM translates it into a rule behind the scenes, and the answer card shows how the question was read, the count, a breakdown chart, and the matching reports. The rule itself is not shown; use `cli query` to see it or to run a hand-written rule. Click a row to read the report next to its extracted record. When part of the question is outside the schema, the card shows the fallback's cost estimate and sends nothing until you click the button that names the token cost.
+- **Find** (home): type a question and press Enter, or pick an example chip. The LLM translates it into a rule behind the scenes, and the answer card shows how the question was read, the count, a breakdown chart, and the matching reports. The rule itself is not shown; use `cli query` to see it or to run a hand-written rule. Click a row to read the report next to its extracted record. When part of the question is outside the schema, the card shows the fallback's cost estimate and sends nothing until you click the button that names the token cost.
 - **Criteria** (train only): the 30 rules scored against `criteria_train_answers.json`, with false positives and negatives for each criterion, and each report's extracted fields compared with the gold record from `oracle.py`.
 - **Reports**: look up any saved report by id.
 
