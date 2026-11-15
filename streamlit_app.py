@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 from pathfinder.cli import DATA, FIELDS, OUT, _records, cache_path, load_split
 from pathfinder.criteria.engine import load_rules, match_all
 from pathfinder.evaluate import _eq, score_criteria
-from pathfinder.extraction.extractor import REPO_ROOT, fingerprint
+from pathfinder.extraction.extractor import DEFAULT_MODEL, REPO_ROOT, fingerprint, model_from_slug
 from pathfinder.extraction.postprocess import derive
 from pathfinder.oracle import gold_extraction
 from pathfinder.query.catalog import build_catalog
@@ -253,7 +253,8 @@ def available() -> tuple[dict[str, dict[str, dict[str, int]]], list[str]]:
     out: dict[str, dict[str, dict[str, int]]] = {}
     unusable = []
     for p in sorted((OUT / "extractions").glob("*.jsonl")):
-        split, _, model = p.name[: -len(".jsonl")].partition(".")
+        split, _, slug = p.name[: -len(".jsonl")].partition(".")
+        model = model_from_slug(slug)
         efforts = usable_efforts(str(p), model, p.stat().st_mtime)
         if efforts:
             out.setdefault(split, {})[model] = efforts
@@ -312,8 +313,10 @@ _keep("split", splits, "train")
 split = s.split
 # The model and effort are fixed: the preferred ones when this split has extractions for them,
 # otherwise the first available, so the app still opens on a split extracted differently.
-MODEL, EFFORT = "gpt-5.4-mini", "low"
-model = MODEL if MODEL in avail[split] else sorted(avail[split])[0]
+# Live calls (translation, fallback) always go to Nebius with DEFAULT_MODEL, whichever file is read.
+MODEL, EFFORT = DEFAULT_MODEL, "low"
+# Files to read, best first: Nebius extractions, then the older OpenAI gpt-5.4-mini ones.
+model = next((m for m in (MODEL, "gpt-5.4-mini") if m in avail[split]), sorted(avail[split])[0])
 effort = EFFORT if EFFORT in avail[split][model] else next(iter(avail[split][model]))
 mtime = cache_path(split, model).stat().st_mtime
 records = load_records(split, model, effort, mtime)
@@ -321,7 +324,7 @@ rows = load_rows(split)
 texts = {i: rows[i]["report_text"] for i in records if i in rows}
 catalog = load_catalog(split, model, effort, mtime)
 load_dotenv(REPO_ROOT / ".env")
-has_key = bool(os.environ.get("OPENAI_API_KEY"))
+has_key = bool(os.environ.get("NEBIUS_API_KEY"))
 gold = load_gold() if split == "train" else {}
 MAX_FALLBACK = 20  # the fallback is refused when more reports than this need an LLM call
 CTX = (split, model, effort, mtime)  # a result is only shown under the settings it was computed with
@@ -341,7 +344,7 @@ def settings_panel():
     st.selectbox("Split", splits, key="split")
     st.caption(f"{len(records):,} saved {split} records ({len(rows):,} reports in {split}.jsonl)")
     if not has_key:
-        st.warning("No OPENAI_API_KEY: questions cannot be answered")
+        st.warning("No NEBIUS_API_KEY: questions cannot be answered")
 
 
 def header():
@@ -602,7 +605,7 @@ def run(question, rule=None, answer_type="ids", by=None, uncovered=None, approve
         return approved is not None and est.calls <= approved.calls and est.input_tokens <= approved.input_tokens
 
     try:
-        res = run_query(question, records, texts, model, confirm, MAX_FALLBACK, effort or None,
+        res = run_query(question, records, texts, MODEL, confirm, MAX_FALLBACK, EFFORT,
                         rule=rule, answer_type=answer_type, breakdown_by=by, uncovered=uncovered,
                         catalog=catalog)
     except Exception as e:  # missing key, network, rate limit: show it, keep the app alive
@@ -710,7 +713,7 @@ def show_result(res):
         if pending_fb:
             e = fb.estimate
             st.warning(f"No final answer yet: checking the uncovered part needs {e.calls} LLM call(s) to "
-                       f"{model}. Nothing has been sent.")
+                       f"{MODEL}. Nothing has been sent.")
             if e.calls > MAX_FALLBACK:
                 st.info(f"That is above the cap of {MAX_FALLBACK} calls. Narrow the question to get an "
                         "approve button.")

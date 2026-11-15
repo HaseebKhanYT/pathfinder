@@ -5,7 +5,8 @@
   python -m pathfinder.cli submit   [--model M] [--out outputs/submission.json]
   python -m pathfinder.cli query    "question" [--split train] [--rule JSON] [--yes] [--max-fallback N]
 
-Extractions are cached in outputs/extractions/<split>.<model>.jsonl.
+Extractions are cached in outputs/extractions/<split>.<model>.jsonl ("/" in the model id
+becomes "__").
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pathlib import Path
 
 from .criteria.engine import match_all
 from .evaluate import field_accuracy, score_criteria
-from .extraction.extractor import DEFAULT_MODEL, REPO_ROOT, extract_reports, fingerprint, load_cache
+from .extraction.extractor import DEFAULT_MODEL, REPO_ROOT, extract_reports, fingerprint, load_cache, model_slug
 from .extraction.postprocess import derive
 from .oracle import gold_extraction
 
@@ -57,7 +58,7 @@ def stratified(rows: list[dict], n: int, seed: int = 7) -> list[dict]:
 
 
 def cache_path(split: str, model: str) -> Path:
-    return OUT / "extractions" / f"{split}.{model}.jsonl"
+    return OUT / "extractions" / f"{split}.{model_slug(model)}.jsonl"
 
 
 def cmd_extract(a):
@@ -123,7 +124,7 @@ def _confirm_interactive(est) -> bool:
     if not sys.stdin.isatty():  # never spend without an explicit yes from a person
         print("Not a terminal, so not asking: re-run with --yes to allow these calls.", file=sys.stderr)
         return False
-    print("Spend OpenAI credits on this? [y/N] ", end="", file=sys.stderr, flush=True)
+    print("Spend Nebius credits on this? [y/N] ", end="", file=sys.stderr, flush=True)
     try:
         return sys.stdin.readline().strip().lower() in ("y", "yes")
     except (EOFError, KeyboardInterrupt):
@@ -139,7 +140,7 @@ def cmd_query(a):
     texts = {r["id"]: r["report_text"] for r in load_split(a.split) if r["id"] in recs}
     confirm = (lambda est: True) if a.yes else _confirm_interactive
     rule = json.loads(a.rule) if a.rule else None
-    res = run_query(a.question, recs, texts, a.model, confirm, a.max_fallback, a.reasoning_effort,
+    res = run_query(a.question, recs, texts, a.llm_model, confirm, a.max_fallback, a.reasoning_effort,
                     rule=rule, answer_type=a.answer, breakdown_by=a.by, uncovered=a.uncovered)
     print(f"[{len(recs)} saved {a.split} records]")
     print(render(res))
@@ -165,7 +166,8 @@ def main():
     q = sub.add_parser("query", help="answer a cohort question over saved extractions")
     q.add_argument("question")
     q.add_argument("--split", default="train", choices=["train", "test"])
-    q.add_argument("--model", default=DEFAULT_MODEL)
+    q.add_argument("--model", default=DEFAULT_MODEL, help="whose saved extractions to query")
+    q.add_argument("--llm-model", default=DEFAULT_MODEL, help="model for translation and fallback calls")
     q.add_argument("--reasoning-effort", default="low")
     q.add_argument("--rule", help="skip translation and run this rule JSON (no API calls)")
     q.add_argument("--answer", default="ids", choices=["ids", "count", "breakdown"], help="with --rule only")

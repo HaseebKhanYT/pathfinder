@@ -11,11 +11,11 @@ Finding the patients for the right research.
 - `pathfinder/criteria/criteria_rules.json`: each criterion as conditions over flat fields, for example c04 is `organ == breast`, `lymphovascular_invasion == present`, `tumor_size_mm > 20`.
 - `pathfinder/oracle.py`: builds the same record from train `labels` with no LLM, to test the rules alone and to score the extractor field by field.
 
-Extraction uses LangChain (`ChatOpenAI.with_structured_output`, strict JSON schema) with `gpt-5.4-mini` at low reasoning effort by default. Results are cached per report in `outputs/extractions/`, tagged with a fingerprint of model, effort, prompt and schema, so changing any of them re-extracts.
+Extraction uses LangChain (`ChatOpenAI.with_structured_output`, strict JSON schema) against [Nebius Token Factory](https://tokenfactory.nebius.com/)'s OpenAI-compatible API, with `openai/gpt-oss-120b` at low reasoning effort by default. Nebius hosts no ChatGPT models; gpt-oss-120b is OpenAI's open-weight model and the only OpenAI model it serves. Results are cached per report in `outputs/extractions/`, tagged with a fingerprint of model, effort, prompt and schema, so changing any of them re-extracts.
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-echo 'OPENAI_API_KEY=sk-...' > .env              # git-ignored
+echo 'NEBIUS_API_KEY=...' > .env                # git-ignored
 .venv/bin/python -m pathfinder.cli extract --split train --limit 210   # organ-stratified sample
 .venv/bin/python -m pathfinder.cli evaluate      # criteria P/R/F1 and field accuracy vs train labels
 .venv/bin/python -m pathfinder.cli submit        # extract test.jsonl, write outputs/submission.json
@@ -50,8 +50,8 @@ echo 'OPENAI_API_KEY=sk-...' > .env              # git-ignored
 - **Criteria** (train only): the 30 rules scored against `criteria_train_answers.json`, with false positives and negatives for each criterion, and, under each report's key findings, an expander comparing its extracted fields with the gold record from `oracle.py`.
 - **Reports**: look up any saved report by id and see its key findings.
 
-The app reads the `gpt-5.4-mini` extractions made at `low` effort (`MODEL` and `EFFORT` in `streamlit_app.py`; it falls back to the first available file if a split has none) and uses the same model and effort for translation. It refuses a fallback that needs more than 20 LLM calls (`MAX_FALLBACK` in `streamlit_app.py`); narrow the question instead.
+The app reads the `openai/gpt-oss-120b` extractions made at `low` effort, or the older OpenAI `gpt-5.4-mini` ones when a split has none (`MODEL` and `EFFORT` in `streamlit_app.py`; failing both, the first available file). Translation and fallback calls always go to Nebius with `MODEL` at `EFFORT`, whichever file is read. It refuses a fallback that needs more than 20 LLM calls (`MAX_FALLBACK` in `streamlit_app.py`); narrow the question instead.
 
-Click the **pathfinder** logo to return to the empty home view. The settings popover, behind the icon at the top right, picks the split and warns when `OPENAI_API_KEY` is missing.
+Click the **pathfinder** logo to return to the empty home view. The settings popover, behind the icon at the top right, picks the split and warns when `NEBIUS_API_KEY` is missing.
 
 The look follows the "Pathfinder Redesign" file in Claude Design. Colors and fonts are in `.streamlit/config.toml`; the hero, search bar, and answer card are styled by the CSS at the top of `streamlit_app.py`. The fonts load from Google Fonts and the home-page photos are hotlinked from Wikimedia Commons, with credits shown on hover, so the app needs a network connection to look right.
