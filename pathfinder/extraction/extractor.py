@@ -13,7 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -104,8 +104,12 @@ def extract_reports(
     model: str = DEFAULT_MODEL,
     reasoning_effort: str | None = "low",
     concurrency: int = 32,
+    on_progress: Callable[[int, int, int], None] | None = None,
 ) -> dict[str, dict]:
     """Extract every report not already cached; return {id: record} for all of them.
+
+    `on_progress(done, total, errors)`, if given, is called after each finished call
+    (in the caller's thread), so a UI can draw a progress bar.
 
     A record is `{"id", "model", "extraction", "derived", "usage"}`, or
     `{"id", "model", "error"}` when the call failed after retries (errored ids
@@ -137,6 +141,8 @@ def extract_reports(
                     cache[rec["id"]] = rec
                 else:
                     n_err += 1
+                if on_progress:
+                    on_progress(n_done, len(todo), n_err)
                 if n_done % 250 == 0 or n_done == len(todo):
                     print(f"[extract] {n_done}/{len(todo)} done ({n_err} errors)", flush=True)
     return {r["id"]: cache[r["id"]] for r in reports if r["id"] in cache}
