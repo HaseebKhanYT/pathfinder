@@ -198,6 +198,16 @@ a { color: #3C7A6E; } a:hover { color: #2A5C52; }
 .pf-pill.mid { background: #FBF5E3; color: #8A6A1C; border-color: #EEDFB4; }
 .pf-pill.neg { background: #F3F6F4; color: #4E635E; border-color: #DCE6E1; }
 .pf-pill.na { background: transparent; color: #8A9B96; border-color: #E6EEEA; }
+.pf-anchor { scroll-margin-top: 24px; }
+/* Report text and findings side by side: the left column stretches to the right one's height. */
+[class*="st-key-pf-report-"] [data-testid="stHorizontalBlock"] { align-items: stretch; }
+[class*="st-key-pf-report-"] [data-testid="stColumn"]:first-child > [data-testid="stVerticalBlock"] { height: 100%; }
+/* The text's element gets no intrinsic height (flex-basis 0, height 0), so the row's height comes
+   from the findings panel and the text fills it, scrolling inside. */
+[class*="st-key-pf-report-"] [data-testid="stColumn"]:first-child [data-testid="stElementContainer"]:has([data-testid="stCode"]) {
+  flex: 1 1 0; height: 0; min-height: 320px; }
+[class*="st-key-pf-report-"] [data-testid="stColumn"]:first-child [data-testid="stCode"],
+[class*="st-key-pf-report-"] [data-testid="stColumn"]:first-child [data-testid="stCode"] pre { height: 100% !important; }
 .pf-label { font-size: 14px; font-weight: 600; color: #1E3A35; }
 .pf-bars { display: flex; flex-direction: column; gap: 12px; }
 .pf-bar { display: grid; grid-template-columns: minmax(0, 180px) minmax(0, 1fr) 36px; align-items: center; gap: 14px;
@@ -507,16 +517,29 @@ def findings_panel(rec: dict) -> str:
             + "</div>")
 
 
-def show_report(rid: str, key: str, compare: bool = False):
+def show_report(rid: str, key: str, compare: bool = False, scroll: bool = True):
     """Report text next to its key findings. compare=True (Criteria page) adds the
-    field-by-field extracted vs gold table used for scoring."""
+    field-by-field extracted vs gold table used for scoring. scroll=True brings the
+    report into view when it is opened from a table, which otherwise leaves it
+    below the fold."""
     if rid not in records:
         st.warning(f"{rid} has no saved record")
         return
-    left, right = st.columns([1, 1])
+    anchor = f"pf-anchor-{key}"
+    st.markdown(f'<div id="{anchor}" class="pf-anchor"></div>', unsafe_allow_html=True)
+    if scroll:
+        # The script runs when this element mounts, and the report id in it makes each newly
+        # opened report a new element, so other reruns (a toggle, say) do not scroll again.
+        st.html(f'<script>/* {esc(rid)} */ setTimeout(() => document.getElementById("{anchor}")'
+                '?.scrollIntoView({behavior: "smooth", block: "start"}), 150);</script>',
+                unsafe_allow_javascript=True)
+    with st.container(key=f"pf-report-{key}"):
+        left, right = st.columns([1, 1])
     with left:
         st.markdown('<span class="pf-eyebrow">Original report</span>', unsafe_allow_html=True)
-        st.code(texts.get(rid, ""), language="text", wrap_lines=True, height=560)
+        # height="stretch" plus the .st-key-pf-report CSS makes the text box end where the
+        # findings panel ends; the text scrolls inside it.
+        st.code(texts.get(rid, ""), language="text", wrap_lines=True, height="stretch")
     with right:
         rec = records[rid]
         st.markdown(findings_panel(rec), unsafe_allow_html=True)
@@ -539,6 +562,10 @@ def show_report(rid: str, key: str, compare: bool = False):
 def id_table(ids: list[str], key: str, extra: dict[str, dict[str, str]] | None = None) -> str | None:
     """Table of ids with summary fields; returns the id of the clicked row.
 
+    Cell selection, not row selection: row selection draws a checkbox column,
+    which reads as "pick several", while a click on any cell should just open
+    that report.
+
     The key includes a digest of the ids: Streamlit keeps a keyed table's
     selection when its data changes, so a row picked in an earlier result
     would otherwise point at the wrong report, or past the end of the list.
@@ -550,11 +577,12 @@ def id_table(ids: list[str], key: str, extra: dict[str, dict[str, str]] | None =
     data = [{"id": i, **{h: _cell(records.get(i, {}).get(c)) for c, h in SUMMARY_COLS.items()},
              **{name: col.get(i, "") for name, col in (extra or {}).items()}} for i in ids]
     ev = st.dataframe(pd.DataFrame(data), hide_index=True, width="stretch",
-                      on_select="rerun", selection_mode="single-row", key=f"{key}-{digest}",
+                      on_select="rerun", selection_mode="single-cell", key=f"{key}-{digest}",
                       height=min(320, 38 + 35 * len(ids)),
                       column_config={"id": st.column_config.TextColumn(width="medium")})
-    sel = ev.selection.rows if ev and ev.selection else []
-    return ids[sel[0]] if sel and sel[0] < len(ids) else None
+    cells = ev.selection.get("cells", []) if ev and ev.selection else []
+    row = cells[0][0] if cells else None
+    return ids[row] if row is not None and row < len(ids) else None
 
 
 # ---------- page: ask ----------
@@ -747,9 +775,10 @@ def page_criteria():
                                "R": round(scores[c]["recall"], 3), "pred": scores[c]["n_pred"],
                                "gold": scores[c]["n_gold"], "criterion": texts_by_id.get(c, "")} for c in cids])
         ev = st.dataframe(table, hide_index=True, width="stretch", on_select="rerun",
-                          selection_mode="single-row", key=f"crit-table-{len(records)}", height=400,
+                          selection_mode="single-cell", key=f"crit-table-{len(records)}", height=400,
                           column_config={"criterion": st.column_config.TextColumn(width="large")})
-        sel = ev.selection.rows if ev and ev.selection else []
+        cells = ev.selection.get("cells", []) if ev and ev.selection else []
+        sel = [cells[0][0]] if cells else []
         if not sel or sel[0] >= len(cids):
             st.markdown('<span class="pf-note">Click a row to see its rule and its false positives and '
                         'negatives.</span>', unsafe_allow_html=True)
@@ -782,7 +811,7 @@ def page_reports():
             st.warning("No saved record has that id.")
             return
         rid = st.selectbox(f"{len(match):,} report(s)", match)
-        show_report(rid, "browse")
+        show_report(rid, "browse", scroll=False)
 
 
 header()
