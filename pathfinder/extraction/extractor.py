@@ -39,13 +39,22 @@ def model_from_slug(slug: str) -> str:
     return slug.replace("__", "/")
 
 
+def provider_key(model: str) -> str:
+    """The .env key a model needs. Nebius ids have an org prefix (`zai-org/GLM-5.3-Flash`);
+    bare ids (`gpt-5.4-mini`) are OpenAI's own models, served by OpenAI."""
+    return "NEBIUS_API_KEY" if "/" in model else "OPENAI_API_KEY"
+
+
 def build_chat_model(model: str = DEFAULT_MODEL, reasoning_effort: str | None = "low") -> ChatOpenAI:
-    """A ChatOpenAI client pointed at Nebius, with the repo's .env key and model-appropriate settings."""
+    """A ChatOpenAI client for Nebius or OpenAI (see `provider_key`), with model-appropriate settings."""
     load_dotenv(REPO_ROOT / ".env")
-    api_key = os.environ.get("NEBIUS_API_KEY")
+    key_name = provider_key(model)
+    api_key = os.environ.get(key_name)
     if not api_key:
-        raise RuntimeError("NEBIUS_API_KEY missing: put it in .env at the repo root")
-    kwargs = dict(model=model, api_key=api_key, base_url=NEBIUS_BASE_URL, max_retries=6, timeout=120)
+        raise RuntimeError(f"{key_name} missing: put it in .env at the repo root")
+    kwargs = dict(model=model, api_key=api_key, max_retries=6, timeout=120)
+    if key_name == "NEBIUS_API_KEY":
+        kwargs["base_url"] = NEBIUS_BASE_URL
     # Reasoning models (gpt-oss, gpt-5*, o*) take reasoning_effort, not temperature.
     if model.removeprefix("openai/").startswith(("gpt-oss", "gpt-5", "o")):
         if reasoning_effort:

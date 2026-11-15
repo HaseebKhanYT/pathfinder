@@ -76,6 +76,21 @@ class Naming(unittest.TestCase):
         self.assertFalse((self.root / "datasets").exists())
 
 
+class ProviderRouting(unittest.TestCase):
+    def test_bare_ids_go_to_openai_and_org_ids_to_nebius(self):
+        self.assertEqual(extractor.provider_key("gpt-5.4-mini"), "OPENAI_API_KEY")
+        self.assertEqual(extractor.provider_key("zai-org/GLM-5.3-Flash"), "NEBIUS_API_KEY")
+        self.assertEqual(extractor.provider_key("openai/gpt-oss-120b"), "NEBIUS_API_KEY")
+
+    def test_openai_client_has_no_nebius_base_url(self):
+        env = {"OPENAI_API_KEY": "sk-test", "NEBIUS_API_KEY": "nb-test"}
+        with mock.patch.dict("os.environ", env), mock.patch.object(extractor, "load_dotenv"):
+            oa = extractor.build_chat_model("gpt-5.4-mini")
+            nb = extractor.build_chat_model("zai-org/GLM-5.3-Flash")
+        self.assertNotIn("nebius", str(oa.openai_api_base or ""))
+        self.assertEqual(nb.openai_api_base, extractor.NEBIUS_BASE_URL)
+
+
 class ExtractProgress(unittest.TestCase):
     def test_on_progress_called_per_result_with_error_count(self):
         class FailingChain:

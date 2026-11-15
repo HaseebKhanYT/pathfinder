@@ -37,7 +37,7 @@ from pathfinder.datasets import dataset_name, parse_reports, save_dataset, split
 from pathfinder.criteria.engine import load_rules, match_all
 from pathfinder.evaluate import _eq, score_criteria
 from pathfinder.extraction.extractor import (DEFAULT_MODEL, REPO_ROOT, extract_reports, fingerprint, load_cache,
-                                             model_from_slug)
+                                             model_from_slug, provider_key)
 from pathfinder.extraction.postprocess import derive
 from pathfinder.oracle import gold_extraction
 from pathfinder.query.catalog import build_catalog
@@ -339,8 +339,11 @@ split = s.split
 # otherwise the first available, so the app still opens on a split extracted differently.
 # Live calls (translation, fallback) always go to Nebius with DEFAULT_MODEL, whichever file is read.
 MODEL, EFFORT = DEFAULT_MODEL, "low"
-# Files to read, best first: DEFAULT_MODEL extractions, then the older OpenAI gpt-5.4-mini ones.
-model = next((m for m in (MODEL, "gpt-5.4-mini") if m in avail[split]), sorted(avail[split])[0])
+# Uploaded datasets are extracted with OpenAI's gpt-5.4-mini: GLM-5.3-Flash often runs out of
+# output tokens mid-JSON on these reports (LengthFinishReasonError), and those reports are lost.
+UPLOAD_MODEL = "gpt-5.4-mini"
+# Files to read, best first: the upload model's extractions (also the full train run), then DEFAULT_MODEL's.
+model = next((m for m in (UPLOAD_MODEL, MODEL) if m in avail[split]), sorted(avail[split])[0])
 effort = EFFORT if EFFORT in avail[split][model] else next(iter(avail[split][model]))
 mtime = cache_path(split, model).stat().st_mtime
 rows_mtime = split_path(split).stat().st_mtime
@@ -349,7 +352,8 @@ rows = load_rows(split, rows_mtime)
 texts = {i: rows[i]["report_text"] for i in records}
 catalog = load_catalog(split, model, effort, mtime, rows_mtime)
 load_dotenv(REPO_ROOT / ".env")
-has_key = bool(os.environ.get("NEBIUS_API_KEY"))
+has_key = bool(os.environ.get(provider_key(MODEL)))
+has_upload_key = bool(os.environ.get(provider_key(UPLOAD_MODEL)))
 gold = load_gold() if split == "train" else {}
 MAX_FALLBACK = 20  # the fallback is refused when more reports than this need an LLM call
 CTX = (split, model, effort, mtime, rows_mtime)  # a result is only shown under the settings it was computed with
@@ -369,7 +373,7 @@ def settings_panel():
     st.selectbox("Split", splits, key="split")
     st.caption(f"{len(records):,} saved {split} records ({len(rows):,} reports in {split}.jsonl)")
     if not has_key:
-        st.warning("No NEBIUS_API_KEY: questions cannot be answered")
+        st.warning(f"No {provider_key(MODEL)}: questions cannot be answered")
     if st.button("Upload a dataset", icon=":material/upload_file:", key="pf-upload-open", width="stretch"):
         upload_dialog()
 
@@ -378,7 +382,7 @@ def settings_panel():
 def upload_dialog():
     """Upload a JSONL of reports, extract the ones not yet extracted, and switch the search to it.
 
-    Nothing is sent to Nebius until the button that names the number of calls is clicked.
+    Nothing is sent to the model until the button that names the number of calls is clicked.
     """
     st.markdown('<span class="pf-note">A <b>.jsonl</b> file with one report per line, shaped like '
                 '<code>test.jsonl</code>: <code>{"id": "...", "report_text": "..."}</code>. Upload '
@@ -392,19 +396,19 @@ def upload_dialog():
         st.error(f"Can't read {f.name}: {e}")
         return
     name = dataset_name(f.name, new_rows)
-    path = cache_path(name, MODEL)
-    fp = fingerprint(MODEL, EFFORT)
+    path = cache_path(name, UPLOAD_MODEL)
+    fp = fingerprint(UPLOAD_MODEL, EFFORT)
     done = {i for i, r in load_cache(path).items() if "extraction" in r and r.get("fingerprint") == fp}
     todo = [r for r in new_rows if r["id"] not in done]
     st.markdown(f"**{len(new_rows):,}** reports, to be saved as the dataset **{esc(name)}**. "
-                f"{len(new_rows) - len(todo):,} already extracted, **{len(todo):,}** to extract with `{MODEL}`.")
-    ref = cache_path("train", MODEL)
+                f"{len(new_rows) - len(todo):,} already extracted, **{len(todo):,}** to extract with `{UPLOAD_MODEL}`.")
+    ref = cache_path("train", UPLOAD_MODEL)
     avg = avg_usage(str(ref), fp, ref.stat().st_mtime) if todo and ref.exists() else None
     if avg:
         st.caption(f"About {avg[0] * len(todo):,.0f} input and {avg[1] * len(todo):,.0f} output tokens, "
                    f"from the average of the saved train extractions.")
-    if todo and not has_key:
-        st.warning("No NEBIUS_API_KEY in .env, so these reports can't be extracted.")
+    if todo and not has_upload_key:
+        st.warning(f"No {provider_key(UPLOAD_MODEL)} in .env, so these reports can't be extracted.")
         return
     label = f"Extract {len(todo):,} report(s) and search them" if todo else "Search this dataset"
     if not st.button(label, type="primary", key="pf-upload-go"):
@@ -418,7 +422,7 @@ def upload_dialog():
             bar.progress(n / total, text=f"Extracting {n:,} / {total:,}" + (f" ({errors} failed)" if errors else ""))
 
         try:
-            got = extract_reports(new_rows, path, MODEL, EFFORT, concurrency=16, on_progress=progress)
+            got = extract_reports(new_rows, path, UPLOAD_MODEL, EFFORT, concurrency=16, on_progress=progress)
         except Exception as e:  # missing key, network: report it, keep the dialog open
             st.error(f"{type(e).__name__}: {e}")
             return
