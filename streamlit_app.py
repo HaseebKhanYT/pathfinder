@@ -515,7 +515,7 @@ def show_report(rid: str, key: str, compare: bool = False):
         return
     left, right = st.columns([1, 1])
     with left:
-        st.markdown(f'<span class="pf-label pf-mono">{esc(rid)}</span>', unsafe_allow_html=True)
+        st.markdown('<span class="pf-eyebrow">Original report</span>', unsafe_allow_html=True)
         st.code(texts.get(rid, ""), language="text", wrap_lines=True, height=560)
     with right:
         rec = records[rid]
