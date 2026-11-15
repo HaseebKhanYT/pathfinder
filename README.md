@@ -46,8 +46,12 @@ echo 'OPENAI_API_KEY=sk-...' > .env              # git-ignored
 .venv/bin/streamlit run streamlit_app.py
 ```
 
-- **Ask**: type a question and let the LLM translate it, or write the rule JSON yourself (no API calls). Shows the rule, rejected attempts, the count, a breakdown chart, and the matching reports; click a row to read the report next to its extracted record. When part of the question is outside the schema, the app shows the fallback's cost estimate and sends nothing until you click the button that names the token cost. **Edit this rule** copies a translated rule into the editor so you can re-run it without another translation call.
-- **Criteria** (train only): the 30 rules scored against `criteria_train_answers.json`, with false positives and negatives for each criterion, and each report's extracted fields compared with the gold record from `oracle.py`.
-- **Reports**: look up any saved report by id.
+- **Find** (home): type a question and press Enter, or pick an example chip. The LLM translates it into a rule behind the scenes, and the answer card shows how the question was read, the count, a breakdown chart, and the matching reports. The rule itself is not shown; use `cli query` to see it or to run a hand-written rule. Click any cell of a row to open that report (the page scrolls to it) and read it next to its key findings: the diagnosis, stage, size, grade and positive nodes, the organ's biomarkers (ER, PR, HER2, Gleason, ISUP and so on), and invasion and margins, with adverse findings highlighted. When part of the question is outside the schema, the card shows the fallback's cost estimate and sends nothing until you click the button that names the token cost.
+- **Criteria** (train only): the 30 rules scored against `criteria_train_answers.json`, with false positives and negatives for each criterion, and, under each report's key findings, an expander comparing its extracted fields with the gold record from `oracle.py`.
+- **Reports**: look up any saved report by id and see its key findings.
 
-The sidebar picks the split, the extraction model (any `outputs/extractions/<split>.<model>.jsonl`), the reasoning effort the extractions were made with, and the fallback cap.
+The app reads the `gpt-5.4-mini` extractions made at `low` effort (`MODEL` and `EFFORT` in `streamlit_app.py`; it falls back to the first available file if a split has none) and uses the same model and effort for translation. It refuses a fallback that needs more than 20 LLM calls (`MAX_FALLBACK` in `streamlit_app.py`); narrow the question instead.
+
+Click the **pathfinder** logo to return to the empty home view. The settings popover, behind the icon at the top right, picks the split and warns when `OPENAI_API_KEY` is missing.
+
+The look follows the "Pathfinder Redesign" file in Claude Design. Colors and fonts are in `.streamlit/config.toml`; the hero, search bar, and answer card are styled by the CSS at the top of `streamlit_app.py`. The fonts load from Google Fonts and the home-page photos are hotlinked from Wikimedia Commons, with credits shown on hover, so the app needs a network connection to look right.

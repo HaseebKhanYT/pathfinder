@@ -1,0 +1,27 @@
+# Theme for streamlit_app.py: the teal-sage palette and type from the
+# "Pathfinder Redesign" Claude Design file. Bespoke pieces (hero, search bar,
+# results card) are styled in the app's CSS; this file covers built-in widgets
+# such as tables, code blocks, and select boxes.
+
+[theme]
+base = "light"
+primaryColor = "#3C7A6E"
+backgroundColor = "#F3F6F4"
+secondaryBackgroundColor = "#EEF4F1"
+textColor = "#1E3A35"
+linkColor = "#3C7A6E"
+borderColor = "#D5E2DD"
+dataframeBorderColor = "#E6EEEA"
+dataframeHeaderBackgroundColor = "#F5F9F7"
+codeBackgroundColor = "#EEF4F1"
+codeTextColor = "#244741"
+baseRadius = "14px"
+buttonRadius = "full"
+font = "Hanken Grotesk:https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&display=swap"
+headingFont = "Newsreader:https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400&display=swap"
+headingFontWeights = 400
+chartCategoricalColors = ["#7FA89B", "#3C7A6E", "#BCD1C9", "#2A5C52", "#5E726D"]
+
+[client]
+toolbarMode = "minimal"
