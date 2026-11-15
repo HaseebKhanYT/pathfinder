@@ -99,7 +99,7 @@ def cmd_evaluate(a):
     print(f"mean F1 = {crit['_mean_f1']:.4f} over {crit['_n_scored']} criteria with gold ids\n\nField accuracy vs labels")
     for f, r in fields.items():
         print(f"  {f:38} {r['accuracy']:.3f}  (n={r['n']})")
-    report = OUT / f"eval.train.{a.model}.json"
+    report = OUT / f"eval.train.{model_slug(a.model)}.json"
     report.write_text(json.dumps({"criteria": crit, "fields": fields}, indent=1))
     print(f"\nwrote {report}")
 
