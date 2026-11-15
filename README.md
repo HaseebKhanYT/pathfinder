@@ -50,8 +50,8 @@ echo 'OPENAI_API_KEY=sk-...' > .env              # git-ignored
 - **Criteria** (train only): the 30 rules scored against `criteria_train_answers.json`, with false positives and negatives for each criterion, and each report's extracted fields compared with the gold record from `oracle.py`.
 - **Reports**: look up any saved report by id.
 
-The app refuses a fallback that needs more than 20 LLM calls (`MAX_FALLBACK` in `streamlit_app.py`); narrow the question instead.
+The app reads the `gpt-5.4-mini` extractions made at `low` effort (`MODEL` and `EFFORT` in `streamlit_app.py`; it falls back to the first available file if a split has none) and uses the same model and effort for translation. It refuses a fallback that needs more than 20 LLM calls (`MAX_FALLBACK` in `streamlit_app.py`); narrow the question instead.
 
-Click the **pathfinder** logo to return to the empty home view. The settings popover, behind the icon at the top right, picks the split, the extraction model (any `outputs/extractions/<split>.<model>.jsonl`), and the reasoning effort the extractions were made with, and warns when `OPENAI_API_KEY` is missing.
+Click the **pathfinder** logo to return to the empty home view. The settings popover, behind the icon at the top right, picks the split and warns when `OPENAI_API_KEY` is missing.
 
 The look follows the "Pathfinder Redesign" file in Claude Design. Colors and fonts are in `.streamlit/config.toml`; the hero, search bar, and answer card are styled by the CSS at the top of `streamlit_app.py`. The fonts load from Google Fonts and the home-page photos are hotlinked from Wikimedia Commons, with credits shown on hover, so the app needs a network connection to look right.

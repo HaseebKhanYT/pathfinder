@@ -257,8 +257,8 @@ if not avail:
 def _keep(key: str, options: list, preferred) -> None:
     """Point a settings widget's state at a valid option before the widget is drawn.
 
-    The settings live in a popover drawn late in the page, while the data they
-    select is loaded first, so the choices are resolved here from session state.
+    The split selector lives in a popover drawn late in the page, while the data
+    it selects is loaded first, so the choice is resolved here from session state.
     """
     if s.get(key) not in options:
         s[key] = preferred if preferred in options else options[0]
@@ -266,11 +266,12 @@ def _keep(key: str, options: list, preferred) -> None:
 
 splits = sorted(avail)
 _keep("split", splits, "train")
-models = sorted(avail[s.split])
-_keep("model", models, "gpt-5.4-mini")
-efforts = list(avail[s.split][s.model])
-_keep("effort", efforts, efforts[0])
-split, model, effort = s.split, s.model, s.effort
+split = s.split
+# The model and effort are fixed: the preferred ones when this split has extractions for them,
+# otherwise the first available, so the app still opens on a split extracted differently.
+MODEL, EFFORT = "gpt-5.4-mini", "low"
+model = MODEL if MODEL in avail[split] else sorted(avail[split])[0]
+effort = EFFORT if EFFORT in avail[split][model] else next(iter(avail[split][model]))
 mtime = cache_path(split, model).stat().st_mtime
 records = load_records(split, model, effort, mtime)
 rows = load_rows(split)
@@ -295,10 +296,6 @@ def go(page: str):
 def settings_panel():
     st.markdown('<span class="pf-label">Settings</span>', unsafe_allow_html=True)
     st.selectbox("Split", splits, key="split")
-    st.selectbox("Extraction model", models, key="model")
-    st.selectbox("Reasoning effort", efforts, key="effort", format_func=lambda e: e or "(none)",
-                 help="Only efforts that some saved extractions were made with are listed (the "
-                      "fingerprint includes the effort). Also used for translation and fallback calls.")
     st.caption(f"{len(records):,} saved {split} records ({len(rows):,} reports in {split}.jsonl)")
     if not has_key:
         st.warning("No OPENAI_API_KEY: questions cannot be answered")
