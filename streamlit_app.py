@@ -166,6 +166,38 @@ a { color: #3C7A6E; } a:hover { color: #2A5C52; }
 .pf-rule { background: #EEF4F1; border-radius: 14px; padding: 14px 18px; font-family: "JetBrains Mono", ui-monospace,
   monospace; font-size: 14px; line-height: 1.6; color: #244741; overflow-x: auto; white-space: pre-wrap; }
 .pf-head + .pf-rule, .pf-read + .pf-rule { margin-top: 28px; }
+/* Key findings panel next to the report text. */
+.pf-find { display: flex; flex-direction: column; gap: 22px; background: #fff; border: 1px solid #DCE6E1;
+  border-radius: 20px; padding: 24px; }
+.pf-fhead { display: flex; flex-direction: column; gap: 4px; }
+.pf-dx { font-family: "Newsreader", Georgia, serif; font-size: 24px; line-height: 1.2; color: #1E3A35; }
+.pf-where { font-size: 14px; color: #3B5550; }
+.pf-who { font-size: 13px; color: #5E726D; }
+.pf-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pf-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 900px) { .pf-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.pf-tile { background: #F5F9F7; border: 1px solid #E6EEEA; border-radius: 14px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pf-tile span { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #5E726D; font-weight: 600; }
+.pf-tile b { font-family: "Newsreader", Georgia, serif; font-weight: 500; font-size: 22px; color: #2A5C52;
+  line-height: 1.15; overflow-wrap: anywhere; }
+.pf-tile.flag { background: #FBF0EA; border-color: #F0D5C6; }
+.pf-tile.flag b { color: #A2482A; }
+.pf-fsect { display: flex; flex-direction: column; }
+.pf-fsect .pf-eyebrow { margin-bottom: 6px; }
+.pf-frow { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 0;
+  border-top: 1px solid #E6EEEA; font-size: 14px; color: #1E3A35; }
+.pf-frow > span:first-child { color: #3B5550; flex: 0 0 auto; max-width: 55%; text-align: left; }
+.pf-frow > :last-child { text-align: right; flex: 0 1 auto; }
+.pf-fval { display: inline-flex; align-items: center; gap: 10px; }
+.pf-fval em { font-style: normal; font-size: 13px; color: #5E726D; }
+.pf-pill { display: inline-block; border-radius: 999px; padding: 3px 11px; font-size: 13px; font-weight: 500;
+  white-space: nowrap; border: 1px solid transparent; }
+.pf-pill.flag { background: #FBF0EA; color: #A2482A; border-color: #F0D5C6; }
+.pf-pill.pos { background: #E3F0EC; color: #245C50; border-color: #C5DED6; }
+.pf-pill.mid { background: #FBF5E3; color: #8A6A1C; border-color: #EEDFB4; }
+.pf-pill.neg { background: #F3F6F4; color: #4E635E; border-color: #DCE6E1; }
+.pf-pill.na { background: transparent; color: #8A9B96; border-color: #E6EEEA; }
 .pf-label { font-size: 14px; font-weight: 600; color: #1E3A35; }
 .pf-bars { display: flex; flex-direction: column; gap: 12px; }
 .pf-bar { display: grid; grid-template-columns: minmax(0, 180px) minmax(0, 1fr) 36px; align-items: center; gap: 14px;
@@ -337,8 +369,147 @@ def working(message: str):
         slot.empty()
 
 
-def show_report(rid: str, key: str):
-    """Report text next to its extracted record (and the gold record on train)."""
+def _nice(v) -> str:
+    """Display form of a coded value: not_identified -> Not identified, low_positive -> Low positive."""
+    if v is True:
+        return "Present"
+    if v is False:
+        return "Absent"
+    s_ = str(v).replace("_", " ")
+    return s_[:1].upper() + s_[1:]
+
+
+# Tone of a status pill. "flag" marks an adverse finding (spread, invasion, a positive margin);
+# "pos" a positive biomarker; "neg" a negative or absent result; "na" not reported.
+_FLAG_IF_PRESENT = {"lymphovascular_invasion", "perineural_invasion", "prostate.extraprostatic_extension",
+                    "prostate.seminal_vesicle_invasion", "prostate.cribriform_glands",
+                    "prostate.intraductal_carcinoma", "kidney.sarcomatoid_or_rhabdoid", "colon.tumor_deposits",
+                    "colon.macroscopic_perforation", "lung.visceral_pleural_invasion", "skin.ulceration"}
+_BIOMARKERS = {"breast.er_status", "breast.pr_status", "breast.her2_status", "stomach.her2_status"}
+
+
+def _tone(field: str, v) -> str:
+    sv = str(v).lower()
+    if v is None or sv in ("not_reported", "not_assessed", "unknown"):
+        return "na"
+    if field in _BIOMARKERS:
+        return {"positive": "pos", "low_positive": "pos", "equivocal": "mid"}.get(sv, "neg")
+    if field in _FLAG_IF_PRESENT:
+        return "flag" if sv in ("present", "positive") or v is True else "neg"
+    if field == "breast.dcis_present":
+        return "pos" if v is True else "neg"
+    return "plain"
+
+
+# Organ-specific rows: (label, field). Grades go in the headline tiles instead.
+_ORGAN_ROWS = {
+    "breast": [("ER", "breast.er_status"), ("PR", "breast.pr_status"), ("HER2", "breast.her2_status"),
+               ("Focality", "breast.tumor_focality"), ("DCIS", "breast.dcis_present")],
+    "prostate": [("Extraprostatic extension", "prostate.extraprostatic_extension"),
+                 ("Seminal vesicle invasion", "prostate.seminal_vesicle_invasion"),
+                 ("Cribriform glands", "prostate.cribriform_glands"),
+                 ("Intraductal carcinoma", "prostate.intraductal_carcinoma")],
+    "kidney": [("Sarcomatoid / rhabdoid", "kidney.sarcomatoid_or_rhabdoid"),
+               ("Extent of invasion", "kidney.extent_of_invasion")],
+    "colon": [("Depth of invasion", "colon.depth_of_invasion"), ("Tumor deposits", "colon.tumor_deposits"),
+              ("Macroscopic perforation", "colon.macroscopic_perforation")],
+    "stomach": [("HER2", "stomach.her2_status"), ("Depth of invasion", "stomach.depth_of_invasion")],
+    "lung": [("Visceral pleural invasion", "lung.visceral_pleural_invasion")],
+    "skin": [("Diagnosis group", "skin.group"), ("Ulceration", "skin.ulceration")],
+}
+
+
+def _grade(rec: dict) -> tuple[str, str] | None:
+    """(label, value) for the organ's grading system, if the report gives one."""
+    o = rec.get("organ")
+    if o == "prostate" and rec.get("prostate.grade_group") is not None:
+        p_, s2 = rec.get("prostate.gleason_primary"), rec.get("prostate.gleason_secondary")
+        gl = f" · Gleason {p_}+{s2}={p_ + s2}" if p_ is not None and s2 is not None else ""
+        return "Grade group", f"{rec['prostate.grade_group']}{gl}"
+    if o == "breast" and rec.get("breast.nottingham_grade") is not None:
+        return "Nottingham grade", str(rec["breast.nottingham_grade"])
+    if o == "kidney" and rec.get("kidney.isup_grade") is not None:
+        return "ISUP grade", str(rec["kidney.isup_grade"])
+    if o == "skin" and rec.get("skin.breslow_thickness_mm") is not None:
+        return "Breslow", f"{rec['skin.breslow_thickness_mm']:g} mm"
+    if rec.get("differentiation_grade") is not None:
+        return "Grade", f"G{rec['differentiation_grade']}"
+    return None
+
+
+def findings_panel(rec: dict) -> str:
+    """HTML for the report's key findings: diagnosis, headline tiles, and status rows."""
+    where = " · ".join(_nice(v) for v in (rec.get("organ"), rec.get("site"), rec.get("laterality"),
+                                          rec.get("procedure")) if v and v != "not_applicable")
+    who = " · ".join(str(v) for v in (rec.get("sex"), rec.get("age_band") and f"age {rec['age_band']}",
+                                      rec.get("report_year")) if v)
+
+    stage = " ".join(v for v in (rec.get("pT"), rec.get("pN")) if v)
+    npos, nex = rec.get("lymph_nodes_positive"), rec.get("lymph_nodes_examined")
+    nodes = f"{npos} / {nex}" if npos is not None and nex is not None else (str(npos) if npos is not None else "")
+    g = _grade(rec)
+    tiles = [("Stage", stage, ""), ("Size", rec.get("tumor_size_text") or "", ""),
+             (g[0] if g else "Grade", g[1] if g else "", ""),
+             ("Nodes positive", nodes, "flag" if npos else "")]
+    if not any(val for _, val, _ in tiles):
+        tiles = []  # e.g. a benign skin biopsy: no stage, size, grade or nodes to show
+    tiles_html = "".join(
+        f'<div class="pf-tile {tone}"><span>{esc(lbl)}</span><b>{esc(val) if val else "—"}</b></div>'
+        for lbl, val, tone in tiles)
+
+    def rows(items):
+        out = []
+        for label, field in items:
+            v = rec.get(field)
+            if v is None or v == "not_applicable":
+                continue
+            tone = _tone(field, v)
+            val = f'<span class="pf-pill {tone}">{esc(_nice(v))}</span>' if tone != "plain" else esc(_nice(v))
+            out.append(f'<div class="pf-frow"><span>{esc(label)}</span>{val}</div>')
+        return "".join(out)
+
+    margin = rec.get("margin_status")
+    margin_row = ""
+    if margin is not None:
+        tone = {"positive": "flag", "negative": "neg"}.get(margin, "na")
+        extra = ""
+        if rec.get("closest_margin_mm") is not None:
+            extra = f'<em>closest {rec["closest_margin_mm"]:g} mm</em>'
+        if rec.get("involved_margins"):
+            extra = f'<em>{esc(_cell(rec["involved_margins"]))}</em>'
+        margin_row = (f'<div class="pf-frow"><span>Margins</span><span class="pf-fval">{extra}'
+                      f'<span class="pf-pill {tone}">{esc(_nice(margin))}</span></span></div>')
+    organ_rows = rows(_ORGAN_ROWS.get(rec.get("organ"), []))
+    spread_rows = rows([("Lymphovascular invasion", "lymphovascular_invasion"),
+                        ("Perineural invasion", "perineural_invasion")]) + margin_row
+
+    tags = []
+    if rec.get("organ") == "breast":
+        er, pr, her2 = (rec.get(f"breast.{k}") for k in ("er_status", "pr_status", "her2_status"))
+        if er == pr == her2 == "negative":
+            tags.append(("Triple-negative", "flag"))
+        elif her2 == "positive":
+            tags.append(("HER2-positive", "pos"))
+    if rec.get("organ") == "stomach" and rec.get("stomach.her2_status") == "positive":
+        tags.append(("HER2-positive", "pos"))
+    if margin == "positive":
+        tags.append(("Positive margin", "flag"))
+    tags_html = ("<div class=\"pf-tags\">" + "".join(f'<span class="pf-pill {tn}">{esc(tx)}</span>'
+                                                    for tx, tn in tags) + "</div>") if tags else ""
+
+    sect = lambda title, body: (f'<div class="pf-fsect"><span class="pf-eyebrow">{title}</span>{body}</div>'
+                                if body else "")
+    return (f'<div class="pf-find"><div class="pf-fhead"><span class="pf-eyebrow">Diagnosis</span>'
+            f'<span class="pf-dx">{esc(_nice(rec.get("histologic_type") or rec.get("histologic_category") or "—"))}'
+            f'</span><span class="pf-where">{esc(where)}</span><span class="pf-who">{esc(who)}</span>{tags_html}</div>'
+            + (f'<div class="pf-tiles">{tiles_html}</div>' if tiles_html else "")
+            + sect("Biomarkers and features", organ_rows) + sect("Invasion and margins", spread_rows)
+            + "</div>")
+
+
+def show_report(rid: str, key: str, compare: bool = False):
+    """Report text next to its key findings. compare=True (Criteria page) adds the
+    field-by-field extracted vs gold table used for scoring."""
     if rid not in records:
         st.warning(f"{rid} has no saved record")
         return
@@ -348,21 +519,21 @@ def show_report(rid: str, key: str):
         st.code(texts.get(rid, ""), language="text", wrap_lines=True, height=560)
     with right:
         rec = records[rid]
-        df = pd.DataFrame({"field": list(rec)})
-        if rid in gold:
+        st.markdown(findings_panel(rec), unsafe_allow_html=True)
+        if compare and rid in gold:
             g = gold[rid]
+            df = pd.DataFrame({"field": list(rec)})
             df["match"] = ["" if f not in FIELDS else ("ok" if _eq(rec.get(f), g.get(f)) else "DIFF")
                            for f in rec]
             df["extracted"] = [_cell(v) for v in rec.values()]
             df["gold"] = [_cell(g.get(f)) for f in rec]
-            st.caption("gold = parsed from train labels by oracle.py; match covers only the scored fields")
-            if st.toggle("Only fields that differ", key=f"{key}-diff-{rid}"):
-                df = df[df["match"] == "DIFF"]
-        else:
-            df["extracted"] = [_cell(v) for v in rec.values()]
-        st.dataframe(df, hide_index=True, height=520, width="stretch",
-                     column_config={"field": st.column_config.TextColumn(width="medium"),
-                                    "match": st.column_config.TextColumn(width="small")})
+            with st.expander("Extracted vs gold record"):
+                st.caption("gold = parsed from train labels by oracle.py; match covers only the scored fields")
+                if st.toggle("Only fields that differ", key=f"{key}-diff-{rid}"):
+                    df = df[df["match"] == "DIFF"]
+                st.dataframe(df, hide_index=True, height=420, width="stretch",
+                             column_config={"field": st.column_config.TextColumn(width="medium"),
+                                            "match": st.column_config.TextColumn(width="small")})
 
 
 def id_table(ids: list[str], key: str, extra: dict[str, dict[str, str]] | None = None) -> str | None:
@@ -539,7 +710,7 @@ def show_result(res):
     if pick:
         show_report(pick, "ask")
     elif res.ids:
-        st.markdown('<span class="pf-note">Click a row to read the report next to its extracted record.</span>',
+        st.markdown('<span class="pf-note">Click a row to read the report and its key findings.</span>',
                     unsafe_allow_html=True)
     if fb and fb.unverified:
         with st.expander(f"Unverified: {len(fb.unverified)} report(s) said yes, but the quote was not found "
@@ -596,7 +767,7 @@ def page_criteria():
                         format_func=lambda k: f"{names[k]} ({len(lists[k])})")
         pick = id_table(lists[kind], f"crit-ids-{cid}-{kind}")
         if pick:
-            show_report(pick, "crit")
+            show_report(pick, "crit", compare=True)
 
 
 # ---------- page: reports ----------
