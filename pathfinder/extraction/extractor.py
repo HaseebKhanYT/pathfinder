@@ -25,12 +25,13 @@ from .schema import ReportExtraction
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NEBIUS_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
-# Nebius serves no ChatGPT models; gpt-oss-120b is the only OpenAI model it hosts.
-DEFAULT_MODEL = "openai/gpt-oss-120b"
+# Nebius serves no ChatGPT models. GLM-5.3-Flash is a mini-tier reasoning model that matched
+# gpt-5.4-mini's field accuracy on a 300-report train sample (0.9985 vs 0.9993), at ~$0.86/1k reports.
+DEFAULT_MODEL = "zai-org/GLM-5.3-Flash"
 
 
 def model_slug(model: str) -> str:
-    """Filename-safe form of a model id: Nebius ids contain "/" (`openai/gpt-oss-120b`)."""
+    """Filename-safe form of a model id: Nebius ids contain "/" (`zai-org/GLM-5.3-Flash`)."""
     return model.replace("/", "__")
 
 

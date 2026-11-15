@@ -315,7 +315,7 @@ split = s.split
 # otherwise the first available, so the app still opens on a split extracted differently.
 # Live calls (translation, fallback) always go to Nebius with DEFAULT_MODEL, whichever file is read.
 MODEL, EFFORT = DEFAULT_MODEL, "low"
-# Files to read, best first: Nebius extractions, then the older OpenAI gpt-5.4-mini ones.
+# Files to read, best first: DEFAULT_MODEL extractions, then the older OpenAI gpt-5.4-mini ones.
 model = next((m for m in (MODEL, "gpt-5.4-mini") if m in avail[split]), sorted(avail[split])[0])
 effort = EFFORT if EFFORT in avail[split][model] else next(iter(avail[split][model]))
 mtime = cache_path(split, model).stat().st_mtime
