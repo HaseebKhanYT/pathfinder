@@ -199,6 +199,7 @@ a { color: #3C7A6E; } a:hover { color: #2A5C52; }
 .pf-pill.neg { background: #F3F6F4; color: #4E635E; border-color: #DCE6E1; }
 .pf-pill.na { background: transparent; color: #8A9B96; border-color: #E6EEEA; }
 .pf-anchor { scroll-margin-top: 24px; }
+[class*="st-key-pf-ids-"] canvas, .st-key-pf-crit-list canvas { cursor: pointer !important; }
 /* Report text and findings side by side: the left column stretches to the right one's height. */
 [class*="st-key-pf-report-"] [data-testid="stHorizontalBlock"] { align-items: stretch; }
 [class*="st-key-pf-report-"] [data-testid="stColumn"]:first-child > [data-testid="stVerticalBlock"] { height: 100%; }
@@ -576,12 +577,17 @@ def id_table(ids: list[str], key: str, extra: dict[str, dict[str, str]] | None =
         st.markdown('<span class="pf-note">No reports.</span>', unsafe_allow_html=True)
         return None
     digest = hashlib.sha1("\n".join(ids).encode()).hexdigest()[:10]
-    data = [{"id": i, **{h: _cell(records.get(i, {}).get(c)) for c, h in SUMMARY_COLS.items()},
+    # The table is drawn on a canvas, so CSS cannot underline a cell. A combining low line after
+    # each character draws the underline instead, and the link colour plus the pointer cursor
+    # (CSS on .st-key-pf-ids-*) say the id opens the report. Rows are mapped back by index.
+    data = [{"id": "".join(ch + "\u0332" for ch in i), **{h: _cell(records.get(i, {}).get(c)) for c, h in SUMMARY_COLS.items()},
              **{name: col.get(i, "") for name, col in (extra or {}).items()}} for i in ids]
-    ev = st.dataframe(pd.DataFrame(data), hide_index=True, width="stretch",
-                      on_select="rerun", selection_mode="single-cell", key=f"{key}-{digest}",
-                      height=min(320, 38 + 35 * len(ids)),
-                      column_config={"id": st.column_config.TextColumn(width="medium")})
+    df = pd.DataFrame(data).style.map(lambda _: "color: #2A5C52", subset=["id"])
+    with st.container(key=f"pf-ids-{key}"):
+        ev = st.dataframe(df, hide_index=True, width="stretch",
+                          on_select="rerun", selection_mode="single-cell", key=f"{key}-{digest}",
+                          height=min(320, 38 + 35 * len(ids)),
+                          column_config={"id": st.column_config.TextColumn(width="medium")})
     cells = ev.selection.get("cells", []) if ev and ev.selection else []
     row = cells[0][0] if cells else None
     return ids[row] if row is not None and row < len(ids) else None
@@ -776,9 +782,10 @@ def page_criteria():
         table = pd.DataFrame([{"id": c, "F1": round(scores[c]["f1"], 3), "P": round(scores[c]["precision"], 3),
                                "R": round(scores[c]["recall"], 3), "pred": scores[c]["n_pred"],
                                "gold": scores[c]["n_gold"], "criterion": texts_by_id.get(c, "")} for c in cids])
-        ev = st.dataframe(table, hide_index=True, width="stretch", on_select="rerun",
-                          selection_mode="single-cell", key=f"crit-table-{len(records)}", height=400,
-                          column_config={"criterion": st.column_config.TextColumn(width="large")})
+        with st.container(key="pf-crit-list"):
+            ev = st.dataframe(table, hide_index=True, width="stretch", on_select="rerun",
+                              selection_mode="single-cell", key=f"crit-table-{len(records)}", height=400,
+                              column_config={"criterion": st.column_config.TextColumn(width="large")})
         cells = ev.selection.get("cells", []) if ev and ev.selection else []
         sel = [cells[0][0]] if cells else []
         if not sel or sel[0] >= len(cids):
